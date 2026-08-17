@@ -22,6 +22,8 @@ import { db } from "@/db/client";
 import { debts, products, sales } from "@/db/schema";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { getCurrentUser } from "@/lib/auth";
+import { DashboardClock } from "./dashboard-clock";
 
 type Module = {
   title: string;
@@ -74,6 +76,7 @@ const GROUPS: ModuleGroup[] = [
 ];
 
 export default async function DashboardPage() {
+  const user = await getCurrentUser();
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
@@ -123,7 +126,9 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <main className="flex-1 p-6 flex flex-col gap-8 bg-gradient-to-b from-muted/40 to-transparent">
+    <main className="flex-1 p-4 sm:p-6 flex flex-col gap-6 sm:gap-8 bg-gradient-to-b from-muted/40 to-transparent">
+      <DashboardClock userFirstName={user?.fullName.split(" ")[0] ?? ""} />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {stats.map((s) => (
           <Card key={s.label} className={s.alert ? "border-destructive/50" : undefined}>

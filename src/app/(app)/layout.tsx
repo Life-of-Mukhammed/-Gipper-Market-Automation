@@ -9,6 +9,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogoutButton } from "./logout-button";
+import { MobileNav } from "./mobile-nav";
+import { HeaderClock } from "./header-clock";
 
 const NAV_LINKS = [
   { title: "Продажа", href: "/prodazha" },
@@ -41,14 +43,17 @@ export default async function AppLayout({
     redirect("/login");
   }
 
+  const userLabel = `${user.fullName} · ${user.role === "admin" ? "Администратор" : "Кассир"}`;
+
   return (
     <div className="flex-1 flex flex-col">
-      <header className="border-b bg-background px-6 py-3 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="font-semibold whitespace-nowrap">
+      <header className="border-b bg-background px-3 sm:px-6 py-3 flex items-center justify-between gap-2 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+          <MobileNav links={[...NAV_LINKS, ...MORE_LINKS]} userLabel={userLabel} />
+          <Link href="/" className="font-semibold whitespace-nowrap truncate">
             СантехТорг CRM
           </Link>
-          <nav className="flex items-center gap-4 text-sm">
+          <nav className="hidden md:flex items-center gap-4 text-sm">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
@@ -72,11 +77,14 @@ export default async function AppLayout({
             </DropdownMenu>
           </nav>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground whitespace-nowrap">
-            {user.fullName} · {user.role === "admin" ? "Администратор" : "Кассир"}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <HeaderClock />
+          <span className="hidden md:inline text-sm text-muted-foreground whitespace-nowrap">
+            {userLabel}
           </span>
-          <LogoutButton />
+          <div className="hidden md:block">
+            <LogoutButton />
+          </div>
         </div>
       </header>
       <div className="flex-1 flex flex-col">{children}</div>
