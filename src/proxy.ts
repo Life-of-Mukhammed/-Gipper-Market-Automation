@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 
 const SESSION_COOKIE = "session_token";
 const PUBLIC_PATHS = ["/login"];
+const PUBLIC_FILES = ["/sw.js", "/manifest.json"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isPublic =
     PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
+    PUBLIC_FILES.includes(pathname) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/auth");
 

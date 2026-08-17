@@ -1,0 +1,17 @@
+{
+  "name": "СантехТорг CRM",
+  "short_name": "СантехТорг",
+  "description": "Система учёта СантехТорг",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

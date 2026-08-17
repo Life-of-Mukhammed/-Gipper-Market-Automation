@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { db } from "../src/db/client";
-import { users, warehouses } from "../src/db/schema";
+import { cashAccounts, users, warehouses } from "../src/db/schema";
 import { hashPassword } from "../src/lib/auth";
 
 async function main() {
@@ -12,6 +12,11 @@ async function main() {
     .values({ name: "ГЛАВНЫЙ" })
     .onConflictDoNothing()
     .returning();
+
+  await db
+    .insert(cashAccounts)
+    .values({ name: "КАССА" })
+    .onConflictDoNothing();
 
   await db
     .insert(users)

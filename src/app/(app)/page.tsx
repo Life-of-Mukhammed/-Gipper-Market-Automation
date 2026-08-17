@@ -1,14 +1,12 @@
-import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { LogoutButton } from "./logout-button";
 
 const MODULES = [
-  { title: "Продажа", href: "/prodazha", ready: false },
+  { title: "Продажа", href: "/prodazha", ready: true },
+  { title: "Товар", href: "/tovar", ready: true },
+  { title: "Ассортимент", href: "/assortiment", ready: true },
   { title: "Поступление", href: "/postuplenie", ready: false },
-  { title: "Ассортимент", href: "/assortiment", ready: false },
-  { title: "Товар", href: "/tovar", ready: false },
   { title: "Деньги", href: "/dengi", ready: false },
   { title: "Отчёт по кассе", href: "/otchet-kassy", ready: false },
   { title: "Клиенты", href: "/klienty", ready: false },
@@ -22,28 +20,13 @@ const MODULES = [
   { title: "Справка", href: "/spravka", ready: false },
 ];
 
-export default async function DashboardPage() {
-  const user = await getCurrentUser();
-  if (!user) {
-    redirect("/login");
-  }
-
+export default function DashboardPage() {
   return (
-    <div className="flex-1 flex flex-col">
-      <header className="border-b bg-background px-6 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">СантехТорг CRM</h1>
-          <p className="text-sm text-muted-foreground">
-            {user.fullName} · {user.role === "admin" ? "Администратор" : "Кассир"}
-          </p>
-        </div>
-        <LogoutButton />
-      </header>
-
-      <main className="flex-1 p-6">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          {MODULES.map((m) => (
-            <Card key={m.href} className="opacity-80">
+    <main className="flex-1 p-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {MODULES.map((m) => {
+          const card = (
+            <Card className={m.ready ? "hover:border-primary transition-colors" : "opacity-70"}>
               <CardContent className="flex flex-col items-start gap-2 py-4">
                 <span className="font-medium">{m.title}</span>
                 <Badge variant={m.ready ? "default" : "secondary"}>
@@ -51,9 +34,16 @@ export default async function DashboardPage() {
                 </Badge>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      </main>
-    </div>
+          );
+          return m.ready ? (
+            <Link key={m.href} href={m.href}>
+              {card}
+            </Link>
+          ) : (
+            <div key={m.href}>{card}</div>
+          );
+        })}
+      </div>
+    </main>
   );
 }
