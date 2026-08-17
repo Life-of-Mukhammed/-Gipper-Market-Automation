@@ -21,8 +21,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { checkoutSale, type DebtPlanInput } from "./actions";
+import { QuickAddClientDialog } from "./quick-add-client-dialog";
 import {
+  cacheClients,
   cacheProducts,
+  getCachedClients,
   getCachedProducts,
   getPendingCount,
   queueOfflineSale,
@@ -62,6 +65,7 @@ function formatMoney(n: number) {
 
 function saveSaleToOutbox(sale: {
   clientUuid: string;
+  clientId: string;
   items: { productId: string; qty: number }[];
   paymentType: "cash" | "card";
   total: number;
@@ -71,16 +75,17 @@ function saveSaleToOutbox(sale: {
 
 export function PosScreen({
   products: serverProducts,
-  clients,
+  clients: serverClients,
 }: {
   products: PosProduct[];
   clients: PosClient[];
 }) {
   const [catalog, setCatalog] = useState<PosProduct[]>(serverProducts);
+  const [clientList, setClientList] = useState<PosClient[]>(serverClients);
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
   const [search, setSearch] = useState("");
   const [paymentType, setPaymentType] = useState<"cash" | "card" | "debt">("cash");
-  const [debtClientId, setDebtClientId] = useState<string>("");
+  const [clientId, setClientId] = useState<string>("");
   const [installments, setInstallments] = useState(1);
   const [firstDueDate, setFirstDueDate] = useState(defaultFirstDueDate);
   const [checkingOut, setCheckingOut] = useState(false);
@@ -94,10 +99,10 @@ export function PosScreen({
   const [pendingCount, setPendingCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Seed the offline product cache whenever we have fresh server data
-  // (the initial catalog state already mirrors serverProducts on mount).
-  // Fall back to the cache if this page ever loads with no server data
-  // (fully offline first load served by the service worker).
+  // Seed the offline product/client cache whenever we have fresh server
+  // data (the initial state already mirrors server props on mount). Fall
+  // back to the cache if this page ever loads with no server data (fully
+  // offline first load served by the service worker).
   useEffect(() => {
     if (serverProducts.length > 0) {
       void cacheProducts(serverProducts);
@@ -114,6 +119,16 @@ export function PosScreen({
       });
     }
   }, [serverProducts]);
+
+  useEffect(() => {
+    if (serverClients.length > 0) {
+      void cacheClients(serverClients);
+    } else if (!navigator.onLine) {
+      void getCachedClients().then((cached) => {
+        if (cached.length > 0) setClientList(cached);
+      });
+    }
+  }, [serverClients]);
 
   async function refreshPendingCount() {
     setPendingCount(await getPendingCount());
@@ -225,17 +240,15 @@ export function PosScreen({
 
   async function handleCheckout() {
     if (lines.length === 0) return;
-    if (paymentType === "debt" && !debtClientId) {
-      toast.error("Выберите клиента для продажи в долг");
+    if (!clientId) {
+      toast.error("Выберите клиента — без клиента продажа невозможна");
       return;
     }
     setCheckingOut(true);
     const items = lines.map((l) => ({ productId: l.product.id, qty: l.qty }));
     const uuid = clientUuid;
     const debtPlan: DebtPlanInput | undefined =
-      paymentType === "debt"
-        ? { clientId: debtClientId, installments, firstDueDate }
-        : undefined;
+      paymentType === "debt" ? { installments, firstDueDate } : undefined;
 
     if (!navigator.onLine) {
       if (paymentType === "debt") {
@@ -243,7 +256,7 @@ export function PosScreen({
         toast.error("Продажа в долг недоступна офлайн — дождитесь подключения к интернету");
         return;
       }
-      await saveSaleToOutbox({ clientUuid: uuid, items, paymentType, total });
+      await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total });
       // optimistic local stock decrement so this cashier doesn't oversell
       // against their own cached view while offline
       setCatalog((prev) =>
@@ -268,14 +281,16 @@ export function PosScreen({
     }
 
     try {
-      const res = await checkoutSale(uuid, items, paymentType, { debtPlan });
+      const res = await checkoutSale(uuid, items, paymentType, clientId, { debtPlan });
       setCheckingOut(false);
 
       if (res.ok) {
-        toast.success(`Продажа оформлена: ${formatMoney(Number(res.total))} сум`);
+        toast.success(
+          `Продажа оформлена: ${formatMoney(Number(res.total))} сум. Чек отправлен клиенту.`,
+        );
         setCart(new Map());
         setClientUuid(crypto.randomUUID());
-        setDebtClientId("");
+        setClientId("");
         setInstallments(1);
       } else {
         toast.error(res.error);
@@ -287,7 +302,7 @@ export function PosScreen({
       if (paymentType === "debt") {
         toast.error("Не удалось оформить продажу в долг — попробуйте ещё раз");
       } else {
-        await saveSaleToOutbox({ clientUuid: uuid, items, paymentType, total });
+        await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total });
         toast.warning("Нет соединения — продажа сохранена локально и будет отправлена автоматически");
         setCart(new Map());
         setClientUuid(crypto.randomUUID());
@@ -431,6 +446,30 @@ export function PosScreen({
 
         <div className="lg:w-80 flex flex-col gap-3">
           <div className="rounded-md border bg-background p-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Клиент *</label>
+                <QuickAddClientDialog
+                  onCreated={(c) => {
+                    setClientList((prev) => [c, ...prev]);
+                    setClientId(c.id);
+                  }}
+                />
+              </div>
+              <Select value={clientId} onValueChange={(v) => setClientId(v ?? "")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Выберите клиента" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientList.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.fullName} · {c.phone}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="flex items-center justify-between text-lg font-semibold">
               <span>Итого</span>
               <span>{formatMoney(total)} сум</span>
@@ -464,38 +503,24 @@ export function PosScreen({
             </div>
 
             {paymentType === "debt" && (
-              <div className="flex flex-col gap-2 rounded-md border p-3">
-                <Select value={debtClientId} onValueChange={(v) => setDebtClientId(v ?? "")}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Выберите клиента" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.fullName} · {c.phone}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Платежей</label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={24}
-                      value={installments}
-                      onChange={(e) => setInstallments(Number(e.target.value) || 1)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Первый платёж</label>
-                    <Input
-                      type="date"
-                      value={firstDueDate}
-                      onChange={(e) => setFirstDueDate(e.target.value)}
-                    />
-                  </div>
+              <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">Платежей</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={installments}
+                    onChange={(e) => setInstallments(Number(e.target.value) || 1)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">Первый платёж</label>
+                  <Input
+                    type="date"
+                    value={firstDueDate}
+                    onChange={(e) => setFirstDueDate(e.target.value)}
+                  />
                 </div>
               </div>
             )}

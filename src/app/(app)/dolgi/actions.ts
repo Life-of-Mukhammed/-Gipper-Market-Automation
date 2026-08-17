@@ -3,8 +3,19 @@
 import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
-import { cashAccounts, cashTransactions, debtPayments, debts, paymentSchedules } from "@/db/schema";
+import {
+  cashAccounts,
+  cashTransactions,
+  clients,
+  companyRequisites,
+  debtPayments,
+  debts,
+  paymentSchedules,
+} from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { sendTelegramMessage } from "@/lib/notifications/telegram";
+import { enqueueWhatsappMessage } from "@/lib/notifications/queue";
+import { buildDebtPaymentReceiptText } from "@/lib/receipts/text";
 
 type ActionResult = { error: string } | { ok: true };
 
@@ -24,6 +35,9 @@ export async function recordDebtPayment(
 
   const [cashAccount] = await db.select().from(cashAccounts).limit(1);
   if (!cashAccount) return { error: "Касса не настроена" };
+
+  let newBalanceForReceipt = 0;
+  let clientIdForReceipt = "";
 
   try {
     await db.transaction(async (tx) => {
@@ -80,6 +94,9 @@ export async function recordDebtPayment(
         cashierId: user.id,
         note: `Оплата долга ${debtId}`,
       });
+
+      newBalanceForReceipt = newBalance;
+      clientIdForReceipt = debt.clientId;
     });
   } catch (err) {
     console.error(err);
@@ -88,7 +105,42 @@ export async function recordDebtPayment(
 
   revalidatePath("/dolgi");
   revalidatePath("/klienty");
+
+  void sendDebtPaymentReceipt(clientIdForReceipt, debtId, amount, newBalanceForReceipt);
+
   return { ok: true };
+}
+
+async function sendDebtPaymentReceipt(
+  clientId: string,
+  debtId: string,
+  paidAmount: number,
+  remainingBalance: number,
+) {
+  const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+  if (!client) return;
+
+  const [requisites] = await db.select().from(companyRequisites).limit(1);
+  const storeName = requisites?.legalName || "СантехТорг";
+
+  const message = buildDebtPaymentReceiptText({
+    storeName,
+    clientName: client.fullName,
+    paidAmount,
+    remainingBalance,
+    createdAt: new Date(),
+  });
+
+  if (client.telegramChatId) {
+    await sendTelegramMessage(client.telegramChatId, message).catch(() => {});
+  }
+
+  await enqueueWhatsappMessage({
+    clientId: client.id,
+    type: "receipt",
+    payloadRef: debtId,
+    message,
+  }).catch(() => {});
 }
 
 export async function markOverdueSchedules() {

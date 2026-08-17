@@ -7,6 +7,7 @@ import {
   cashAccounts,
   cashTransactions,
   clients,
+  companyRequisites,
   debts,
   paymentSchedules,
   products,
@@ -17,14 +18,34 @@ import {
 } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import { sendTelegramMessage } from "@/lib/notifications/telegram";
+import { enqueueWhatsappMessage } from "@/lib/notifications/queue";
+import { buildSaleReceiptText, type ReceiptItem } from "@/lib/receipts/text";
 
 export type CartItemInput = {
   productId: string;
   qty: number;
 };
 
+type CreateClientForPosResult =
+  | { error: string; client?: undefined }
+  | { error?: undefined; client: { id: string; fullName: string; phone: string } };
+
+export async function createClientForPos(formData: FormData): Promise<CreateClientForPosResult> {
+  const user = await getCurrentUser();
+  if (!user) return { error: "Не авторизован" };
+
+  const fullName = String(formData.get("fullName") ?? "").trim();
+  const phone = String(formData.get("phone") ?? "").trim();
+  if (!fullName || !phone) {
+    return { error: "Имя и телефон обязательны" };
+  }
+
+  const [client] = await db.insert(clients).values({ fullName, phone }).returning();
+  revalidatePath("/klienty");
+  return { client: { id: client.id, fullName: client.fullName, phone: client.phone } };
+}
+
 export type DebtPlanInput = {
-  clientId: string;
   installments: number;
   firstDueDate: string; // YYYY-MM-DD
 };
@@ -43,6 +64,7 @@ export async function checkoutSale(
   clientUuid: string,
   items: CartItemInput[],
   paymentType: "cash" | "card" | "debt",
+  clientId: string,
   opts?: { allowNegativeStock?: boolean; debtPlan?: DebtPlanInput },
 ): Promise<CheckoutResult> {
   const user = await getCurrentUser();
@@ -52,8 +74,11 @@ export async function checkoutSale(
   if (items.length === 0) {
     return { ok: false, error: "Корзина пуста" };
   }
-  if (paymentType === "debt" && !opts?.debtPlan?.clientId) {
-    return { ok: false, error: "Выберите клиента для продажи в долг" };
+  if (!clientId) {
+    return { ok: false, error: "Выберите клиента для продажи" };
+  }
+  if (paymentType === "debt" && !opts?.debtPlan) {
+    return { ok: false, error: "Укажите план платежей для продажи в долг" };
   }
 
   const [existing] = await db
@@ -67,8 +92,12 @@ export async function checkoutSale(
 
   const [warehouse] = await db.select().from(warehouses).limit(1);
   const [cashAccount] = await db.select().from(cashAccounts).limit(1);
+  const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
   if (!warehouse || !cashAccount) {
     return { ok: false, error: "Склад или касса не настроены" };
+  }
+  if (!client) {
+    return { ok: false, error: "Клиент не найден" };
   }
 
   try {
@@ -102,7 +131,7 @@ export async function checkoutSale(
           warehouseId: warehouse.id,
           cashierId: user.id,
           paymentType,
-          clientId: opts?.debtPlan?.clientId ?? null,
+          clientId,
           subtotal: subtotal.toFixed(2),
           discount: "0",
           total: total.toFixed(2),
@@ -112,6 +141,7 @@ export async function checkoutSale(
 
       const insufficientProductIds: string[] = [];
       let hadStockConflict = false;
+      const receiptItems: ReceiptItem[] = [];
 
       for (const item of items) {
         const product = catalogById.get(item.productId)!;
@@ -165,6 +195,13 @@ export async function checkoutSale(
           createdBy: user.id,
           note: opts?.allowNegativeStock ? "Синхронизировано из офлайн-продажи" : null,
         });
+
+        receiptItems.push({
+          name: product.name,
+          qty: item.qty,
+          unitPrice: product.salePrice,
+          lineTotal: lineTotal.toFixed(2),
+        });
       }
 
       if (!opts?.allowNegativeStock && insufficientProductIds.length > 0) {
@@ -189,18 +226,10 @@ export async function checkoutSale(
       }
 
       if (paymentType === "debt" && opts?.debtPlan) {
-        const [client] = await tx
-          .select({ id: clients.id })
-          .from(clients)
-          .where(eq(clients.id, opts.debtPlan.clientId));
-        if (!client) {
-          throw new CheckoutError("Клиент не найден", []);
-        }
-
         const [debt] = await tx
           .insert(debts)
           .values({
-            clientId: opts.debtPlan.clientId,
+            clientId,
             saleId: sale.id,
             originalAmount: total.toFixed(2),
             remainingBalance: total.toFixed(2),
@@ -227,7 +256,7 @@ export async function checkoutSale(
         }
       }
 
-      return { saleId: sale.id, total: total.toFixed(2), hadStockConflict };
+      return { saleId: sale.id, total: total.toFixed(2), hadStockConflict, receiptItems };
     });
 
     revalidatePath("/tovar");
@@ -235,9 +264,14 @@ export async function checkoutSale(
     revalidatePath("/klienty");
     revalidatePath("/dolgi");
 
-    if (paymentType === "debt" && opts?.debtPlan) {
-      void notifyDebtSale(opts.debtPlan.clientId, Number(result.total), opts.debtPlan.installments);
-    }
+    void sendSaleReceipt(
+      client,
+      result.saleId,
+      result.receiptItems,
+      result.total,
+      paymentType,
+      opts?.debtPlan,
+    );
 
     return {
       ok: true,
@@ -258,14 +292,39 @@ export async function checkoutSale(
   }
 }
 
-async function notifyDebtSale(clientId: string, total: number, installments: number) {
-  const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
-  if (!client?.telegramChatId) return;
+async function sendSaleReceipt(
+  client: typeof clients.$inferSelect,
+  saleId: string,
+  items: ReceiptItem[],
+  total: string,
+  paymentType: "cash" | "card" | "debt",
+  debtPlan?: DebtPlanInput,
+) {
+  const [requisites] = await db.select().from(companyRequisites).limit(1);
+  const storeName = requisites?.legalName || "СантехТорг";
 
-  await sendTelegramMessage(
-    client.telegramChatId,
-    `Здравствуйте, ${client.fullName}! Оформлена продажа в долг на сумму ${total.toLocaleString("ru-RU")} сум, разбита на ${installments} платеж(ей). Подробности можно уточнить в магазине СантехТорг.`,
-  ).catch(() => {});
+  const message = buildSaleReceiptText({
+    storeName,
+    clientName: client.fullName,
+    items,
+    total,
+    paymentType,
+    createdAt: new Date(),
+    debtSummary: debtPlan
+      ? { installments: debtPlan.installments, firstDueDate: debtPlan.firstDueDate }
+      : undefined,
+  });
+
+  if (client.telegramChatId) {
+    await sendTelegramMessage(client.telegramChatId, message).catch(() => {});
+  }
+
+  await enqueueWhatsappMessage({
+    clientId: client.id,
+    type: "receipt",
+    payloadRef: saleId,
+    message,
+  }).catch(() => {});
 }
 
 class CheckoutError extends Error {

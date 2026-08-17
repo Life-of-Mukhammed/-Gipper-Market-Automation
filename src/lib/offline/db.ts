@@ -10,8 +10,15 @@ export type CachedProduct = {
   stockQty: number;
 };
 
+export type CachedClient = {
+  id: string;
+  fullName: string;
+  phone: string;
+};
+
 export type OutboxSale = {
   clientUuid: string;
+  clientId: string;
   items: { productId: string; qty: number }[];
   paymentType: "cash" | "card";
   total: number;
@@ -22,12 +29,14 @@ export type OutboxSale = {
 
 class PosDatabase extends Dexie {
   productsCache!: EntityTable<CachedProduct, "id">;
+  clientsCache!: EntityTable<CachedClient, "id">;
   outbox!: EntityTable<OutboxSale, "clientUuid">;
 
   constructor() {
     super("santehtorg-pos");
-    this.version(1).stores({
+    this.version(2).stores({
       productsCache: "id, skuCode, barcode, name",
+      clientsCache: "id, fullName, phone",
       outbox: "clientUuid, status, createdAt",
     });
   }
