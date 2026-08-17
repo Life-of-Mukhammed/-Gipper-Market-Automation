@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DateRangeForm } from "./date-range-form";
+import { AnalizCharts } from "./analiz-charts";
 
 function daysAgo(n: number) {
   const d = new Date();
@@ -61,6 +62,7 @@ export default async function AnalizPage({ searchParams }: PageProps<"/analiz">)
         .select({
           day: sql<string>`to_char(${sales.createdAt}, 'YYYY-MM-DD')`,
           revenue: sql<string>`sum(${sales.total})`,
+          salesCount: sql<number>`count(*)::int`,
         })
         .from(sales)
         .where(salesInRange)
@@ -112,12 +114,12 @@ export default async function AnalizPage({ searchParams }: PageProps<"/analiz">)
     {} as Record<string, number>,
   );
 
-  const dailyMap = new Map<string, { revenue: number; expense: number }>();
+  const dailyMap = new Map<string, { revenue: number; expense: number; salesCount: number }>();
   for (const d of dailySales) {
-    dailyMap.set(d.day, { revenue: Number(d.revenue), expense: 0 });
+    dailyMap.set(d.day, { revenue: Number(d.revenue), expense: 0, salesCount: d.salesCount });
   }
   for (const d of dailyExpenses) {
-    const existing = dailyMap.get(d.day) ?? { revenue: 0, expense: 0 };
+    const existing = dailyMap.get(d.day) ?? { revenue: 0, expense: 0, salesCount: 0 };
     existing.expense = Number(d.expense);
     dailyMap.set(d.day, existing);
   }
@@ -193,6 +195,23 @@ export default async function AnalizPage({ searchParams }: PageProps<"/analiz">)
             </CardContent>
           </Card>
         </div>
+
+        <AnalizCharts
+          dailyRows={dailyRows}
+          paymentBreakdown={{
+            cash: paymentBreakdown.cash ?? 0,
+            card: paymentBreakdown.card ?? 0,
+            debt: paymentBreakdown.debt ?? 0,
+          }}
+          expensesByCategory={expensesByCategory.map((e) => ({
+            category: e.category,
+            total: Number(e.total),
+          }))}
+          topProducts={topProducts.map((p) => ({
+            name: p.name,
+            totalRevenue: Number(p.totalRevenue),
+          }))}
+        />
 
         <div>
           <h2 className="font-medium mb-2">По дням</h2>
