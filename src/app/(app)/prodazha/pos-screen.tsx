@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -20,7 +13,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { checkoutSale, type DebtPlanInput } from "./actions";
+import {
+  checkoutSale,
+  getClientsBatch,
+  getProductsBatch,
+  searchClientsOnline,
+  searchProductsOnline,
+  type DebtPlanInput,
+} from "./actions";
 import { QuickAddClientDialog } from "./quick-add-client-dialog";
 import {
   cacheClients,
@@ -73,19 +73,40 @@ function saveSaleToOutbox(sale: {
   return queueOfflineSale({ ...sale, createdAt: Date.now(), status: "pending" });
 }
 
-export function PosScreen({
-  products: serverProducts,
-  clients: serverClients,
-}: {
-  products: PosProduct[];
-  clients: PosClient[];
-}) {
-  const [catalog, setCatalog] = useState<PosProduct[]>(serverProducts);
-  const [clientList, setClientList] = useState<PosClient[]>(serverClients);
+const SYNC_CHUNK_SIZE = 1000;
+
+async function backgroundSyncCatalog<T>(
+  fetchBatch: (offset: number, limit: number) => Promise<T[]>,
+  store: (items: T[]) => Promise<void>,
+) {
+  let offset = 0;
+  const all: T[] = [];
+  for (;;) {
+    const batch = await fetchBatch(offset, SYNC_CHUNK_SIZE);
+    all.push(...batch);
+    if (batch.length < SYNC_CHUNK_SIZE) break;
+    offset += SYNC_CHUNK_SIZE;
+  }
+  await store(all);
+}
+
+export function PosScreen() {
+  // Local IndexedDB-backed catalog, used only for offline search. Online
+  // search always hits the server instead — the catalog can be far too
+  // large to hold in memory as the single source of truth for typing.
+  const [offlineCatalog, setOfflineCatalog] = useState<PosProduct[]>([]);
+  const [offlineClients, setOfflineClients] = useState<PosClient[]>([]);
+
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
   const [search, setSearch] = useState("");
+  const [results, setResults] = useState<PosProduct[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  const [resolvedClient, setResolvedClient] = useState<PosClient | null>(null);
+  const [clientQuery, setClientQuery] = useState("");
+  const [clientResults, setClientResults] = useState<PosClient[]>([]);
+
   const [paymentType, setPaymentType] = useState<"cash" | "card" | "debt">("cash");
-  const [clientId, setClientId] = useState<string>("");
   const [installments, setInstallments] = useState(1);
   const [firstDueDate, setFirstDueDate] = useState(defaultFirstDueDate);
   const [markupPercent, setMarkupPercent] = useState(0);
@@ -100,36 +121,30 @@ export function PosScreen({
   const [pendingCount, setPendingCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Seed the offline product/client cache whenever we have fresh server
-  // data (the initial state already mirrors server props on mount). Fall
-  // back to the cache if this page ever loads with no server data (fully
-  // offline first load served by the service worker).
+  // Load whatever offline cache already exists immediately (near-instant,
+  // just IndexedDB), then kick off a background refresh from the server in
+  // chunks. Neither blocks the page: the offline cache covers search until
+  // the refresh finishes, and online search never depends on either.
   useEffect(() => {
-    if (serverProducts.length > 0) {
-      void cacheProducts(serverProducts);
+    void getCachedProducts().then(setOfflineCatalog);
+    void getCachedClients().then(setOfflineClients);
+
+    if (navigator.onLine) {
+      void backgroundSyncCatalog(getProductsBatch, async (all) => {
+        await cacheProducts(all);
+        setOfflineCatalog(all);
+      });
+      void backgroundSyncCatalog(getClientsBatch, async (all) => {
+        await cacheClients(all);
+        setOfflineClients(all);
+      });
       // Client-navigation to this page only ever fetches RSC payloads, not
       // the full document, so the service worker never gets a full-page
       // snapshot to serve on a later offline reload. A plain fetch() here
       // requests the full HTML document and warms that cache entry.
-      if (navigator.onLine) {
-        fetch(window.location.pathname).catch(() => {});
-      }
-    } else if (!navigator.onLine) {
-      void getCachedProducts().then((cached) => {
-        if (cached.length > 0) setCatalog(cached);
-      });
+      fetch(window.location.pathname).catch(() => {});
     }
-  }, [serverProducts]);
-
-  useEffect(() => {
-    if (serverClients.length > 0) {
-      void cacheClients(serverClients);
-    } else if (!navigator.onLine) {
-      void getCachedClients().then((cached) => {
-        if (cached.length > 0) setClientList(cached);
-      });
-    }
-  }, [serverClients]);
+  }, []);
 
   async function refreshPendingCount() {
     setPendingCount(await getPendingCount());
@@ -169,18 +184,45 @@ export function PosScreen({
     };
   }, []);
 
-  const results = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return catalog
-      .filter(
-        (p) =>
-          p.skuCode.toLowerCase().includes(q) ||
-          p.barcode?.toLowerCase().includes(q) ||
-          p.name.toLowerCase().includes(q),
-      )
-      .slice(0, 8);
-  }, [search, catalog]);
+  // Product search — debounced, server-backed while online, offline cache
+  // otherwise. Never depends on the full catalog being in memory.
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- flips a loading flag for the debounced fetch below; there's no derivable value to replace it with
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      if (navigator.onLine) {
+        try {
+          setResults(await searchProductsOnline(q));
+        } catch {
+          setResults(filterLocalProducts(offlineCatalog, q));
+        }
+      } else {
+        setResults(filterLocalProducts(offlineCatalog, q));
+      }
+      setSearching(false);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search, offlineCatalog]);
+
+  // Client search — same online/offline split.
+  useEffect(() => {
+    const q = clientQuery.trim();
+    if (!q) return;
+    const timer = setTimeout(async () => {
+      if (navigator.onLine) {
+        try {
+          setClientResults(await searchClientsOnline(q));
+        } catch {
+          setClientResults(filterLocalClients(offlineClients, q));
+        }
+      } else {
+        setClientResults(filterLocalClients(offlineClients, q));
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [clientQuery, offlineClients]);
 
   function addToCart(product: PosProduct) {
     setCart((prev) => {
@@ -190,6 +232,7 @@ export function PosScreen({
       return next;
     });
     setSearch("");
+    setResults([]);
     searchInputRef.current?.focus();
   }
 
@@ -215,22 +258,25 @@ export function PosScreen({
     });
   }
 
-  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  async function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     if (!q) return;
 
-    const exact = catalog.find(
-      (p) => p.barcode?.toLowerCase() === q || p.skuCode.toLowerCase() === q,
-    );
-    if (exact) {
-      addToCart(exact);
-      return;
-    }
+    // A barcode scan resolves to exactly one match; typing that also
+    // matches one result naturally hits the same path.
     if (results.length === 1) {
       addToCart(results[0]);
+      return;
     }
+
+    const exact = navigator.onLine
+      ? (await searchProductsOnline(q).catch(() => []))[0]
+      : offlineCatalog.find(
+          (p) => p.barcode?.toLowerCase() === q.toLowerCase() || p.skuCode.toLowerCase() === q.toLowerCase(),
+        );
+    if (exact) addToCart(exact);
   }
 
   const lines = Array.from(cart.values());
@@ -241,15 +287,25 @@ export function PosScreen({
 
   async function handleCheckout() {
     if (lines.length === 0) return;
-    if (!clientId) {
+    if (!resolvedClient) {
       toast.error("Выберите клиента — без клиента продажа невозможна");
       return;
     }
     setCheckingOut(true);
     const items = lines.map((l) => ({ productId: l.product.id, qty: l.qty }));
     const uuid = clientUuid;
+    const clientId = resolvedClient.id;
     const debtPlan: DebtPlanInput | undefined =
       paymentType === "debt" ? { installments, firstDueDate, markupPercent } : undefined;
+
+    function resetForm() {
+      setCart(new Map());
+      setClientUuid(crypto.randomUUID());
+      setResolvedClient(null);
+      setClientQuery("");
+      setInstallments(1);
+      setMarkupPercent(0);
+    }
 
     if (!navigator.onLine) {
       if (paymentType === "debt") {
@@ -260,21 +316,14 @@ export function PosScreen({
       await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total });
       // optimistic local stock decrement so this cashier doesn't oversell
       // against their own cached view while offline
-      setCatalog((prev) =>
-        prev.map((p) => {
-          const line = cart.get(p.id);
-          return line ? { ...p, stockQty: p.stockQty - line.qty } : p;
-        }),
-      );
-      await cacheProducts(
-        catalog.map((p) => {
-          const line = cart.get(p.id);
-          return line ? { ...p, stockQty: p.stockQty - line.qty } : p;
-        }),
-      );
+      const decremented = offlineCatalog.map((p) => {
+        const line = cart.get(p.id);
+        return line ? { ...p, stockQty: p.stockQty - line.qty } : p;
+      });
+      setOfflineCatalog(decremented);
+      await cacheProducts(decremented);
       toast.warning("Нет соединения — продажа сохранена локально и будет отправлена автоматически");
-      setCart(new Map());
-      setClientUuid(crypto.randomUUID());
+      resetForm();
       setCheckingOut(false);
       await refreshPendingCount();
       searchInputRef.current?.focus();
@@ -289,11 +338,7 @@ export function PosScreen({
         toast.success(
           `Продажа оформлена: ${formatMoney(Number(res.total))} сум. Чек отправлен клиенту.`,
         );
-        setCart(new Map());
-        setClientUuid(crypto.randomUUID());
-        setClientId("");
-        setInstallments(1);
-        setMarkupPercent(0);
+        resetForm();
       } else {
         toast.error(res.error);
       }
@@ -306,8 +351,7 @@ export function PosScreen({
       } else {
         await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total });
         toast.warning("Нет соединения — продажа сохранена локально и будет отправлена автоматически");
-        setCart(new Map());
-        setClientUuid(crypto.randomUUID());
+        resetForm();
         await refreshPendingCount();
       }
     }
@@ -336,7 +380,7 @@ export function PosScreen({
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKeyDown}
             />
-            {results.length > 0 && (
+            {search.trim() && (results.length > 0 || searching) && (
               <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-80 overflow-y-auto">
                 {results.map((p) => (
                   <button
@@ -364,6 +408,9 @@ export function PosScreen({
                     </span>
                   </button>
                 ))}
+                {searching && results.length === 0 && (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">Поиск...</div>
+                )}
               </div>
             )}
           </div>
@@ -453,23 +500,53 @@ export function PosScreen({
                 <label className="text-xs text-muted-foreground">Клиент *</label>
                 <QuickAddClientDialog
                   onCreated={(c) => {
-                    setClientList((prev) => [c, ...prev]);
-                    setClientId(c.id);
+                    setResolvedClient(c);
+                    setClientQuery("");
+                    setClientResults([]);
                   }}
                 />
               </div>
-              <Select value={clientId} onValueChange={(v) => setClientId(v ?? "")}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Выберите клиента" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clientList.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.fullName} · {c.phone}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {resolvedClient ? (
+                <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                  <span>
+                    {resolvedClient.fullName} · <span className="font-mono">{resolvedClient.phone}</span>
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setResolvedClient(null)}
+                  >
+                    Изменить
+                  </Button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <Input
+                    placeholder="Поиск по имени или телефону..."
+                    value={clientQuery}
+                    onChange={(e) => setClientQuery(e.target.value)}
+                  />
+                  {clientQuery.trim() && clientResults.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-60 overflow-y-auto">
+                      {clientResults.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            setResolvedClient(c);
+                            setClientQuery("");
+                            setClientResults([]);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                        >
+                          {c.fullName} · <span className="font-mono text-xs">{c.phone}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between text-lg font-semibold">
@@ -558,4 +635,23 @@ export function PosScreen({
       </div>
     </div>
   );
+}
+
+function filterLocalProducts(catalog: PosProduct[], q: string) {
+  const query = q.toLowerCase();
+  return catalog
+    .filter(
+      (p) =>
+        p.skuCode.toLowerCase().includes(query) ||
+        p.barcode?.toLowerCase().includes(query) ||
+        p.name.toLowerCase().includes(query),
+    )
+    .slice(0, 8);
+}
+
+function filterLocalClients(list: PosClient[], q: string) {
+  const query = q.toLowerCase();
+  return list
+    .filter((c) => c.fullName.toLowerCase().includes(query) || c.phone.toLowerCase().includes(query))
+    .slice(0, 8);
 }

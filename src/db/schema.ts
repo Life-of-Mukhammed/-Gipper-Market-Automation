@@ -134,6 +134,7 @@ export const cashTransactions = pgTable("cash_transactions", {
     ],
   }).notNull(),
   amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+  category: text("category"),
   relatedSaleId: uuid("related_sale_id").references(() => sales.id),
   cashierId: uuid("cashier_id")
     .notNull()
@@ -172,6 +173,8 @@ export const clients = pgTable("clients", {
   telegramChatId: text("telegram_chat_id").unique(),
   address: text("address"),
   notes: text("notes"),
+  passportNumber: text("passport_number"),
+  inn: text("inn"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -323,6 +326,19 @@ export const currencyRates = pgTable("currency_rates", {
   currencyCode: text("currency_code").notNull(),
   rateToBase: numeric("rate_to_base", { precision: 14, scale: 4 }).notNull(),
   effectiveDate: date("effective_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ---- Активы (Phase 5) ----
+
+export const assets = pgTable("assets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  category: text("category"),
+  purchaseDate: date("purchase_date"),
+  value: numeric("value", { precision: 14, scale: 2 }).notNull().default("0"),
+  note: text("note"),
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, ilike, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
 import {
@@ -43,6 +43,85 @@ export async function createClientForPos(formData: FormData): Promise<CreateClie
   const [client] = await db.insert(clients).values({ fullName, phone }).returning();
   revalidatePath("/klienty");
   return { client: { id: client.id, fullName: client.fullName, phone: client.phone } };
+}
+
+const POS_PRODUCT_COLUMNS = {
+  id: products.id,
+  skuCode: products.skuCode,
+  barcode: products.barcode,
+  name: products.name,
+  unit: products.unit,
+  salePrice: products.salePrice,
+  stockQty: products.stockQty,
+};
+
+/**
+ * Live search used while online — avoids ever loading the full catalog
+ * just to type-ahead. Exact sku/barcode match (the common barcode-scanner
+ * path) is checked first so a scan resolves in one indexed lookup instead
+ * of a broader ilike scan.
+ */
+export async function searchProductsOnline(query: string) {
+  const q = query.trim();
+  if (!q) return [];
+
+  const [exact] = await db
+    .select(POS_PRODUCT_COLUMNS)
+    .from(products)
+    .where(
+      and(eq(products.isActive, true), or(eq(products.skuCode, q), eq(products.barcode, q))),
+    )
+    .limit(1);
+  if (exact) return [exact];
+
+  return db
+    .select(POS_PRODUCT_COLUMNS)
+    .from(products)
+    .where(
+      and(
+        eq(products.isActive, true),
+        or(
+          ilike(products.name, `%${q}%`),
+          ilike(products.skuCode, `%${q}%`),
+          ilike(products.barcode, `%${q}%`),
+        ),
+      ),
+    )
+    .limit(8);
+}
+
+export async function searchClientsOnline(query: string) {
+  const q = query.trim();
+  if (!q) return [];
+  return db
+    .select({ id: clients.id, fullName: clients.fullName, phone: clients.phone })
+    .from(clients)
+    .where(or(ilike(clients.fullName, `%${q}%`), ilike(clients.phone, `%${q}%`)))
+    .limit(8);
+}
+
+/**
+ * Feeds the background offline-cache sync in pos-screen.tsx: pulled in
+ * chunks after the page is already interactive so a large catalog never
+ * blocks the initial load, only the offline fallback.
+ */
+export async function getProductsBatch(offset: number, limit: number) {
+  return db
+    .select(POS_PRODUCT_COLUMNS)
+    .from(products)
+    .where(eq(products.isActive, true))
+    .orderBy(asc(products.createdAt))
+    .limit(limit)
+    .offset(offset);
+}
+
+export async function getClientsBatch(offset: number, limit: number) {
+  return db
+    .select({ id: clients.id, fullName: clients.fullName, phone: clients.phone })
+    .from(clients)
+    .orderBy(asc(clients.createdAt))
+    .limit(limit)
+    .offset(offset);
 }
 
 export type DebtPlanInput = {

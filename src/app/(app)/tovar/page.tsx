@@ -15,7 +15,7 @@ import { PaginationControls } from "@/components/pagination-controls";
 import { ProductFormDialog } from "./product-form-dialog";
 import { ToggleActiveButton } from "./toggle-active-button";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 export default async function TovarPage({ searchParams }: PageProps<"/tovar">) {
   const sp = await searchParams;

@@ -1,0 +1,57 @@
+"use client";
+
+import { useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { createAsset } from "./actions";
+
+export function AssetForm() {
+  const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    startTransition(async () => {
+      const result = await createAsset(null, formData);
+      if (result && "error" in result) {
+        toast.error(result.error);
+      } else {
+        toast.success("Актив добавлен");
+        (e.target as HTMLFormElement).reset();
+        router.refresh();
+      }
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3 rounded-md border bg-background p-4">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="name">Название</Label>
+        <Input id="name" name="name" className="w-48" required />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="category">Категория</Label>
+        <Input id="category" name="category" placeholder="Оборудование, мебель..." className="w-48" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="value">Стоимость</Label>
+        <Input id="value" name="value" type="number" step="0.01" min="0" className="w-36" required />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="purchaseDate">Дата покупки</Label>
+        <Input id="purchaseDate" name="purchaseDate" type="date" />
+      </div>
+      <div className="flex flex-col gap-1.5 flex-1 min-w-40">
+        <Label htmlFor="note">Заметка</Label>
+        <Input id="note" name="note" />
+      </div>
+      <Button type="submit" disabled={pending}>
+        {pending ? "Сохранение..." : "Добавить"}
+      </Button>
+    </form>
+  );
+}

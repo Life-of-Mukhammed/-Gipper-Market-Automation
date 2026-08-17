@@ -20,11 +20,13 @@ const NAV_LINKS = [
 
 const MORE_LINKS = [
   { title: "Поступление", href: "/postuplenie" },
+  { title: "Деньги", href: "/dengi" },
   { title: "Отчёт по кассе", href: "/otchet-kassy" },
   { title: "Анализ", href: "/analiz" },
-  { title: "Ценники", href: "/cenniki" },
   { title: "Архив", href: "/arhiv" },
+  { title: "Ценники", href: "/cenniki" },
   { title: "Валюта", href: "/valyuta" },
+  { title: "Активы", href: "/aktivy" },
   { title: "Реквизиты", href: "/rekvizity" },
   { title: "Справка", href: "/spravka" },
 ];

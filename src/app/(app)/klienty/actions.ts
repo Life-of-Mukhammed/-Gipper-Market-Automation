@@ -23,6 +23,8 @@ export async function createClient(
   const phone = String(formData.get("phone") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
+  const passportNumber = String(formData.get("passportNumber") ?? "").trim();
+  const inn = String(formData.get("inn") ?? "").trim();
 
   if (!fullName || !phone) {
     return { error: "Имя и телефон обязательны" };
@@ -33,6 +35,8 @@ export async function createClient(
     phone,
     address: address || null,
     notes: notes || null,
+    passportNumber: passportNumber || null,
+    inn: inn || null,
   });
 
   revalidatePath("/klienty");
@@ -49,6 +53,8 @@ export async function updateClient(
   const phone = String(formData.get("phone") ?? "").trim();
   const address = String(formData.get("address") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
+  const passportNumber = String(formData.get("passportNumber") ?? "").trim();
+  const inn = String(formData.get("inn") ?? "").trim();
 
   if (!id || !fullName || !phone) {
     return { error: "Имя и телефон обязательны" };
@@ -56,7 +62,14 @@ export async function updateClient(
 
   await db
     .update(clients)
-    .set({ fullName, phone, address: address || null, notes: notes || null })
+    .set({
+      fullName,
+      phone,
+      address: address || null,
+      notes: notes || null,
+      passportNumber: passportNumber || null,
+      inn: inn || null,
+    })
     .where(eq(clients.id, id));
 
   revalidatePath("/klienty");

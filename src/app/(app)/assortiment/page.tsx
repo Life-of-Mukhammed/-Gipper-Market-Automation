@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { PaginationControls } from "@/components/pagination-controls";
 import { SearchBox } from "./search-box";
 
-const PAGE_SIZE = 60;
+const PAGE_SIZE = 25;
 
 export default async function AssortimentPage({
   searchParams,

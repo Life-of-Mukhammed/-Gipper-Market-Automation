@@ -21,6 +21,8 @@ type Client = {
   phone: string;
   address: string | null;
   notes: string | null;
+  passportNumber: string | null;
+  inn: string | null;
 };
 
 export function ClientFormDialog({ client }: { client?: Client }) {
@@ -78,6 +80,20 @@ export function ClientFormDialog({ client }: { client?: Client }) {
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="address">Адрес</Label>
             <Input id="address" name="address" defaultValue={client?.address ?? ""} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="passportNumber">Паспорт</Label>
+              <Input
+                id="passportNumber"
+                name="passportNumber"
+                defaultValue={client?.passportNumber ?? ""}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="inn">ИНН</Label>
+              <Input id="inn" name="inn" defaultValue={client?.inn ?? ""} />
+            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="notes">Заметки</Label>

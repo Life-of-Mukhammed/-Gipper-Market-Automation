@@ -15,7 +15,7 @@ import { ListSearchBox } from "@/components/list-search-box";
 import { PaginationControls } from "@/components/pagination-controls";
 import { ClientFormDialog } from "./client-form-dialog";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 export default async function KlientyPage({ searchParams }: PageProps<"/klienty">) {
   const sp = await searchParams;
@@ -35,6 +35,8 @@ export default async function KlientyPage({ searchParams }: PageProps<"/klienty"
         phone: clients.phone,
         address: clients.address,
         notes: clients.notes,
+        passportNumber: clients.passportNumber,
+        inn: clients.inn,
         telegramChatId: clients.telegramChatId,
         totalDebt: sql<string>`coalesce(sum(${debts.remainingBalance}) filter (where ${debts.status} != 'paid'), 0)`,
       })
