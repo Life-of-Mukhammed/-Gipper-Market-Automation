@@ -6,13 +6,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -35,11 +28,20 @@ export function ReceivingForm({
   suppliers: Supplier[];
 }) {
   const [supplierId, setSupplierId] = useState<string>("");
+  const [supplierQuery, setSupplierQuery] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [search, setSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+
+  const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null;
+
+  const supplierResults = useMemo(() => {
+    const q = supplierQuery.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) => s.name.toLowerCase().includes(q));
+  }, [supplierQuery, suppliers]);
 
   const results = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -80,6 +82,7 @@ export function ReceivingForm({
       toast.success("Приход оприходован, остатки обновлены");
       setLines([]);
       setSupplierId("");
+      setSupplierQuery("");
       router.refresh();
     } else {
       toast.error(res.error);
@@ -88,22 +91,49 @@ export function ReceivingForm({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex gap-2 items-end">
-        <div className="flex-1">
-          <label className="text-xs text-muted-foreground">Поставщик (необязательно)</label>
-          <Select value={supplierId} onValueChange={(v) => setSupplierId(v ?? "")}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Без поставщика" />
-            </SelectTrigger>
-            <SelectContent>
-              {suppliers.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs text-muted-foreground">Поставщик (необязательно)</label>
+        {selectedSupplier ? (
+          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+            <span>{selectedSupplier.name}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSupplierId("");
+                setSupplierQuery("");
+              }}
+            >
+              Изменить
+            </Button>
+          </div>
+        ) : (
+          <div className="relative">
+            <Input
+              placeholder="Найдите поставщика по названию..."
+              value={supplierQuery}
+              onChange={(e) => setSupplierQuery(e.target.value)}
+            />
+            {supplierResults.length > 0 && (
+              <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-60 overflow-y-auto">
+                {supplierResults.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      setSupplierId(s.id);
+                      setSupplierQuery("");
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="relative">
