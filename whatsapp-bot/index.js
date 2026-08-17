@@ -33,6 +33,14 @@ function digitsOnly(phone) {
   return phone.replace(/[^0-9]/g, "");
 }
 
+// Sending to a number that isn't real/reachable (typos, test data, etc.)
+// wastes a send attempt against a dead end and is itself a signal WhatsApp's
+// abuse detection watches for. Reject obviously-invalid numbers up front.
+function isPlausiblePhone(phone) {
+  const digits = digitsOnly(phone);
+  return digits.length >= 9 && digits.length <= 15;
+}
+
 async function sendPendingMessages() {
   if (connectionStatus !== "connected" || !sock) return;
 
@@ -42,10 +50,18 @@ async function sendPendingMessages() {
      join clients c on c.id = nj.target_client_id
      where nj.channel = 'whatsapp' and nj.status = 'pending'
      order by nj.created_at asc
-     limit 20`,
+     limit 5`,
   );
 
   for (const job of jobs) {
+    if (!isPlausiblePhone(job.phone)) {
+      await pool.query(
+        `update notification_jobs set status = 'failed', last_error = 'invalid phone number' where id = $1`,
+        [job.id],
+      );
+      continue;
+    }
+
     await pool
       .query(`update notification_jobs set status = 'sending' where id = $1`, [job.id])
       .catch(() => {});
@@ -54,7 +70,7 @@ async function sendPendingMessages() {
       // A human never fires messages back-to-back at machine speed; a
       // random pause between sends is one of the cheapest ways to avoid
       // looking like bulk/bot traffic to WhatsApp's abuse detection.
-      await randomDelay(2000, 6000);
+      await randomDelay(8000, 20000);
       await sock.sendMessage(jid, { text: job.message });
       await pool.query(
         `update notification_jobs set status = 'sent', sent_at = now() where id = $1`,
