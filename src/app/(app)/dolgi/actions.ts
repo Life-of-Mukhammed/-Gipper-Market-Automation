@@ -10,6 +10,8 @@ import {
   companyRequisites,
   debtPayments,
   debts,
+  payablePayments,
+  payables,
   paymentSchedules,
 } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
@@ -141,6 +143,97 @@ async function sendDebtPaymentReceipt(
     payloadRef: debtId,
     message,
   }).catch(() => {});
+}
+
+export async function createPayable(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { error: "Не авторизован" };
+
+  const creditorName = String(formData.get("creditorName") ?? "").trim();
+  const phone = String(formData.get("phone") ?? "").trim();
+  const amount = Number(String(formData.get("amount") ?? "0").replace(",", "."));
+  const dueDate = String(formData.get("dueDate") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!creditorName) return { error: "Укажите кому должны" };
+  if (!Number.isFinite(amount) || amount <= 0) return { error: "Введите корректную сумму" };
+
+  await db.insert(payables).values({
+    creditorName,
+    phone: phone || null,
+    originalAmount: amount.toFixed(2),
+    remainingBalance: amount.toFixed(2),
+    dueDate: dueDate || null,
+    note: note || null,
+    status: "open",
+  });
+
+  revalidatePath("/dolgi");
+  return { ok: true };
+}
+
+export async function recordPayablePayment(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { error: "Не авторизован" };
+
+  const payableId = String(formData.get("payableId") ?? "");
+  const amount = Number(String(formData.get("amount") ?? "0").replace(",", "."));
+
+  if (!payableId || !Number.isFinite(amount) || amount <= 0) {
+    return { error: "Введите корректную сумму" };
+  }
+
+  const [cashAccount] = await db.select().from(cashAccounts).limit(1);
+  if (!cashAccount) return { error: "Касса не настроена" };
+
+  try {
+    await db.transaction(async (tx) => {
+      const [payable] = await tx
+        .select()
+        .from(payables)
+        .where(eq(payables.id, payableId))
+        .for("update");
+      if (!payable) throw new Error("Долг не найден");
+
+      const newBalance = Math.max(0, Number(payable.remainingBalance) - amount);
+
+      await tx
+        .update(payables)
+        .set({
+          remainingBalance: newBalance.toFixed(2),
+          status: newBalance <= 0 ? "paid" : "open",
+        })
+        .where(eq(payables.id, payableId));
+
+      await tx.insert(payablePayments).values({
+        payableId,
+        amount: amount.toFixed(2),
+        cashAccountId: cashAccount.id,
+        cashierId: user.id,
+      });
+
+      await tx.insert(cashTransactions).values({
+        cashAccountId: cashAccount.id,
+        type: "payable_payment",
+        amount: amount.toFixed(2),
+        cashierId: user.id,
+        note: `Оплата поставщику: ${payable.creditorName}`,
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    return { error: "Ошибка при записи платежа" };
+  }
+
+  revalidatePath("/dolgi");
+  revalidatePath("/dengi");
+  return { ok: true };
 }
 
 export async function markOverdueSchedules() {

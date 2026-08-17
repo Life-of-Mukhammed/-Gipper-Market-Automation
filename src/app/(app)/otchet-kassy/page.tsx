@@ -1,6 +1,6 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, ne, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { cashAccounts, cashShifts, cashTransactions } from "@/db/schema";
+import { cashAccounts, cashShifts, cashTransactions, debts, payables } from "@/db/schema";
 import {
   Table,
   TableBody,
@@ -10,10 +10,36 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { CloseShiftForm, OpenShiftForm } from "./shift-forms";
 
 export default async function OtchetKassyPage() {
   const [cashAccount] = await db.select().from(cashAccounts).limit(1);
+
+  const [[{ cashBalance }], [{ totalReceivable }], [{ totalPayable }]] = await Promise.all([
+    cashAccount
+      ? db
+          .select({
+            cashBalance: sql<string>`coalesce(sum(case
+              when ${cashTransactions.type} in ('sale_income','debt_payment','adjustment') then ${cashTransactions.amount}
+              when ${cashTransactions.type} in ('payout','payable_payment') then -${cashTransactions.amount}
+              else 0
+            end), 0)`,
+          })
+          .from(cashTransactions)
+          .where(eq(cashTransactions.cashAccountId, cashAccount.id))
+      : Promise.resolve([{ cashBalance: "0" }]),
+    db
+      .select({ totalReceivable: sql<string>`coalesce(sum(${debts.remainingBalance}), 0)` })
+      .from(debts)
+      .where(ne(debts.status, "paid")),
+    db
+      .select({ totalPayable: sql<string>`coalesce(sum(${payables.remainingBalance}), 0)` })
+      .from(payables)
+      .where(ne(payables.status, "paid")),
+  ]);
+
+  const netPosition = Number(cashBalance) + Number(totalReceivable) - Number(totalPayable);
 
   const [openShiftRow] = cashAccount
     ? await db
@@ -35,7 +61,7 @@ export default async function OtchetKassyPage() {
       );
     currentTotal = txs.reduce((sum, t) => {
       if (t.type === "sale_income" || t.type === "debt_payment") return sum + Number(t.amount);
-      if (t.type === "payout") return sum - Number(t.amount);
+      if (t.type === "payout" || t.type === "payable_payment") return sum - Number(t.amount);
       if (t.type === "adjustment") return sum + Number(t.amount);
       return sum;
     }, 0);
@@ -58,6 +84,44 @@ export default async function OtchetKassyPage() {
       </div>
 
       <main className="flex-1 p-6 flex flex-col gap-6">
+        <div>
+          <h2 className="font-medium mb-2">Полный отчёт</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="py-4">
+                <div className="text-sm text-muted-foreground">Деньги в кассе (всего)</div>
+                <div className="text-xl font-semibold">
+                  {Number(cashBalance).toLocaleString("ru-RU")}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-4">
+                <div className="text-sm text-muted-foreground">Нам должны</div>
+                <div className="text-xl font-semibold text-emerald-600">
+                  {Number(totalReceivable).toLocaleString("ru-RU")}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-4">
+                <div className="text-sm text-muted-foreground">Мы должны</div>
+                <div className="text-xl font-semibold text-destructive">
+                  {Number(totalPayable).toLocaleString("ru-RU")}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-4">
+                <div className="text-sm text-muted-foreground">Итого (касса + нам − мы)</div>
+                <div className={`text-xl font-semibold ${netPosition < 0 ? "text-destructive" : ""}`}>
+                  {netPosition.toLocaleString("ru-RU")}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
         {openShiftRow ? (
           <div className="rounded-md border bg-background p-4 flex flex-col gap-4">
             <div className="flex items-center justify-between">

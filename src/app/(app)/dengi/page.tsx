@@ -18,8 +18,9 @@ const PAGE_SIZE = 25;
 
 const TYPE_LABELS: Record<string, { label: string; sign: 1 | -1 | 0 }> = {
   sale_income: { label: "продажа", sign: 1 },
-  debt_payment: { label: "оплата долга", sign: 1 },
+  debt_payment: { label: "нам заплатили долг", sign: 1 },
   payout: { label: "расход", sign: -1 },
+  payable_payment: { label: "мы заплатили долг", sign: -1 },
   adjustment: { label: "корректировка", sign: 1 },
   shift_open: { label: "открытие смены", sign: 0 },
   shift_close: { label: "закрытие смены", sign: 0 },
@@ -37,10 +38,10 @@ export default async function DengiPage({ searchParams }: PageProps<"/dengi">) {
         .select({
           balance: sql<string>`coalesce(sum(case
             when ${cashTransactions.type} in ('sale_income','debt_payment','adjustment') then ${cashTransactions.amount}
-            when ${cashTransactions.type} = 'payout' then -${cashTransactions.amount}
+            when ${cashTransactions.type} in ('payout','payable_payment') then -${cashTransactions.amount}
             else 0
           end), 0)`,
-          totalExpenses: sql<string>`coalesce(sum(case when ${cashTransactions.type} = 'payout' then ${cashTransactions.amount} else 0 end), 0)`,
+          totalExpenses: sql<string>`coalesce(sum(case when ${cashTransactions.type} in ('payout','payable_payment') then ${cashTransactions.amount} else 0 end), 0)`,
         })
         .from(cashTransactions)
         .where(eq(cashTransactions.cashAccountId, cashAccount.id))

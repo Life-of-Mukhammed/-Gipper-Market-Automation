@@ -59,7 +59,7 @@ export async function closeShift(
     .filter((t) => new Date(t.createdAt) >= new Date(shift.openedAt))
     .reduce((sum, t) => {
       if (t.type === "sale_income" || t.type === "debt_payment") return sum + Number(t.amount);
-      if (t.type === "payout") return sum - Number(t.amount);
+      if (t.type === "payout" || t.type === "payable_payment") return sum - Number(t.amount);
       if (t.type === "adjustment") return sum + Number(t.amount);
       return sum;
     }, 0);

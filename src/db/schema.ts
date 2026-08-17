@@ -128,6 +128,7 @@ export const cashTransactions = pgTable("cash_transactions", {
       "sale_income",
       "payout",
       "debt_payment",
+      "payable_payment",
       "adjustment",
       "shift_open",
       "shift_close",
@@ -215,6 +216,37 @@ export const debtPayments = pgTable("debt_payments", {
     .notNull()
     .references(() => debts.id),
   paymentScheduleId: uuid("payment_schedule_id").references(() => paymentSchedules.id),
+  amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+  cashAccountId: uuid("cash_account_id")
+    .notNull()
+    .references(() => cashAccounts.id),
+  cashierId: uuid("cashier_id")
+    .notNull()
+    .references(() => users.id),
+  paidAt: timestamp("paid_at").notNull().defaultNow(),
+});
+
+// Наши долги (payables) — money the store owes to suppliers/others,
+// the mirror image of Долги (customer debts owed to the store).
+export const payables = pgTable("payables", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  creditorName: text("creditor_name").notNull(),
+  phone: text("phone"),
+  originalAmount: numeric("original_amount", { precision: 14, scale: 2 }).notNull(),
+  remainingBalance: numeric("remaining_balance", { precision: 14, scale: 2 }).notNull(),
+  dueDate: date("due_date"),
+  note: text("note"),
+  status: text("status", { enum: ["open", "paid"] })
+    .notNull()
+    .default("open"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const payablePayments = pgTable("payable_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  payableId: uuid("payable_id")
+    .notNull()
+    .references(() => payables.id),
   amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
   cashAccountId: uuid("cash_account_id")
     .notNull()
