@@ -6,6 +6,9 @@ import { db } from "@/db/client";
 import {
   cashAccounts,
   cashTransactions,
+  clients,
+  debts,
+  paymentSchedules,
   products,
   saleItems,
   sales,
@@ -13,10 +16,17 @@ import {
   warehouses,
 } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { sendTelegramMessage } from "@/lib/notifications/telegram";
 
 export type CartItemInput = {
   productId: string;
   qty: number;
+};
+
+export type DebtPlanInput = {
+  clientId: string;
+  installments: number;
+  firstDueDate: string; // YYYY-MM-DD
 };
 
 type CheckoutResult =
@@ -32,8 +42,8 @@ type CheckoutResult =
 export async function checkoutSale(
   clientUuid: string,
   items: CartItemInput[],
-  paymentType: "cash" | "card",
-  opts?: { allowNegativeStock?: boolean },
+  paymentType: "cash" | "card" | "debt",
+  opts?: { allowNegativeStock?: boolean; debtPlan?: DebtPlanInput },
 ): Promise<CheckoutResult> {
   const user = await getCurrentUser();
   if (!user) {
@@ -41,6 +51,9 @@ export async function checkoutSale(
   }
   if (items.length === 0) {
     return { ok: false, error: "Корзина пуста" };
+  }
+  if (paymentType === "debt" && !opts?.debtPlan?.clientId) {
+    return { ok: false, error: "Выберите клиента для продажи в долг" };
   }
 
   const [existing] = await db
@@ -89,6 +102,7 @@ export async function checkoutSale(
           warehouseId: warehouse.id,
           cashierId: user.id,
           paymentType,
+          clientId: opts?.debtPlan?.clientId ?? null,
           subtotal: subtotal.toFixed(2),
           discount: "0",
           total: total.toFixed(2),
@@ -174,11 +188,57 @@ export async function checkoutSale(
         });
       }
 
+      if (paymentType === "debt" && opts?.debtPlan) {
+        const [client] = await tx
+          .select({ id: clients.id })
+          .from(clients)
+          .where(eq(clients.id, opts.debtPlan.clientId));
+        if (!client) {
+          throw new CheckoutError("Клиент не найден", []);
+        }
+
+        const [debt] = await tx
+          .insert(debts)
+          .values({
+            clientId: opts.debtPlan.clientId,
+            saleId: sale.id,
+            originalAmount: total.toFixed(2),
+            remainingBalance: total.toFixed(2),
+            status: "open",
+          })
+          .returning();
+
+        const n = Math.max(1, Math.min(24, opts.debtPlan.installments));
+        const baseAmount = Math.floor((total / n) * 100) / 100;
+        const lastAmount = Math.round((total - baseAmount * (n - 1)) * 100) / 100;
+        const firstDue = new Date(opts.debtPlan.firstDueDate);
+
+        for (let i = 0; i < n; i++) {
+          const dueDate = new Date(firstDue);
+          dueDate.setMonth(dueDate.getMonth() + i);
+          const amount = i === n - 1 ? lastAmount : baseAmount;
+          await tx.insert(paymentSchedules).values({
+            debtId: debt.id,
+            installmentNumber: i + 1,
+            dueDate: dueDate.toISOString().slice(0, 10),
+            amountDue: amount.toFixed(2),
+            status: "pending",
+          });
+        }
+      }
+
       return { saleId: sale.id, total: total.toFixed(2), hadStockConflict };
     });
 
     revalidatePath("/tovar");
     revalidatePath("/assortiment");
+    revalidatePath("/klienty");
+    revalidatePath("/dolgi");
+
+    if (paymentType === "debt" && opts?.debtPlan) {
+      void notifyDebtSale(opts.debtPlan.clientId, Number(result.total), opts.debtPlan.installments);
+    }
+
     return {
       ok: true,
       saleId: result.saleId,
@@ -196,6 +256,16 @@ export async function checkoutSale(
     console.error(err);
     return { ok: false, error: "Ошибка при оформлении продажи" };
   }
+}
+
+async function notifyDebtSale(clientId: string, total: number, installments: number) {
+  const [client] = await db.select().from(clients).where(eq(clients.id, clientId));
+  if (!client?.telegramChatId) return;
+
+  await sendTelegramMessage(
+    client.telegramChatId,
+    `Здравствуйте, ${client.fullName}! Оформлена продажа в долг на сумму ${total.toLocaleString("ru-RU")} сум, разбита на ${installments} платеж(ей). Подробности можно уточнить в магазине СантехТорг.`,
+  ).catch(() => {});
 }
 
 class CheckoutError extends Error {

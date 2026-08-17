@@ -11,7 +11,9 @@ export function proxy(request: NextRequest) {
     PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
     PUBLIC_FILES.includes(pathname) ||
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/api/auth");
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/telegram") ||
+    pathname.startsWith("/api/cron");
 
   if (isPublic) {
     return NextResponse.next();

@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -13,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { checkoutSale } from "./actions";
+import { checkoutSale, type DebtPlanInput } from "./actions";
 import {
   cacheProducts,
   getCachedProducts,
@@ -31,6 +38,18 @@ export type PosProduct = {
   salePrice: string;
   stockQty: number;
 };
+
+export type PosClient = {
+  id: string;
+  fullName: string;
+  phone: string;
+};
+
+function defaultFirstDueDate() {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
 
 type CartLine = {
   product: PosProduct;
@@ -50,11 +69,20 @@ function saveSaleToOutbox(sale: {
   return queueOfflineSale({ ...sale, createdAt: Date.now(), status: "pending" });
 }
 
-export function PosScreen({ products: serverProducts }: { products: PosProduct[] }) {
+export function PosScreen({
+  products: serverProducts,
+  clients,
+}: {
+  products: PosProduct[];
+  clients: PosClient[];
+}) {
   const [catalog, setCatalog] = useState<PosProduct[]>(serverProducts);
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
   const [search, setSearch] = useState("");
-  const [paymentType, setPaymentType] = useState<"cash" | "card">("cash");
+  const [paymentType, setPaymentType] = useState<"cash" | "card" | "debt">("cash");
+  const [debtClientId, setDebtClientId] = useState<string>("");
+  const [installments, setInstallments] = useState(1);
+  const [firstDueDate, setFirstDueDate] = useState(defaultFirstDueDate);
   const [checkingOut, setCheckingOut] = useState(false);
   const [clientUuid, setClientUuid] = useState(() => crypto.randomUUID());
   const [isOnline, setIsOnline] = useState(
@@ -191,11 +219,24 @@ export function PosScreen({ products: serverProducts }: { products: PosProduct[]
 
   async function handleCheckout() {
     if (lines.length === 0) return;
+    if (paymentType === "debt" && !debtClientId) {
+      toast.error("Выберите клиента для продажи в долг");
+      return;
+    }
     setCheckingOut(true);
     const items = lines.map((l) => ({ productId: l.product.id, qty: l.qty }));
     const uuid = clientUuid;
+    const debtPlan: DebtPlanInput | undefined =
+      paymentType === "debt"
+        ? { clientId: debtClientId, installments, firstDueDate }
+        : undefined;
 
     if (!navigator.onLine) {
+      if (paymentType === "debt") {
+        setCheckingOut(false);
+        toast.error("Продажа в долг недоступна офлайн — дождитесь подключения к интернету");
+        return;
+      }
       await saveSaleToOutbox({ clientUuid: uuid, items, paymentType, total });
       // optimistic local stock decrement so this cashier doesn't oversell
       // against their own cached view while offline
@@ -221,13 +262,15 @@ export function PosScreen({ products: serverProducts }: { products: PosProduct[]
     }
 
     try {
-      const res = await checkoutSale(uuid, items, paymentType);
+      const res = await checkoutSale(uuid, items, paymentType, { debtPlan });
       setCheckingOut(false);
 
       if (res.ok) {
         toast.success(`Продажа оформлена: ${formatMoney(Number(res.total))} сум`);
         setCart(new Map());
         setClientUuid(crypto.randomUUID());
+        setDebtClientId("");
+        setInstallments(1);
       } else {
         toast.error(res.error);
       }
@@ -235,11 +278,15 @@ export function PosScreen({ products: serverProducts }: { products: PosProduct[]
       // network failed mid-flight — fall back to the offline queue rather
       // than losing a checkout the cashier already confirmed
       setCheckingOut(false);
-      await saveSaleToOutbox({ clientUuid: uuid, items, paymentType, total });
-      toast.warning("Нет соединения — продажа сохранена локально и будет отправлена автоматически");
-      setCart(new Map());
-      setClientUuid(crypto.randomUUID());
-      await refreshPendingCount();
+      if (paymentType === "debt") {
+        toast.error("Не удалось оформить продажу в долг — попробуйте ещё раз");
+      } else {
+        await saveSaleToOutbox({ clientUuid: uuid, items, paymentType, total });
+        toast.warning("Нет соединения — продажа сохранена локально и будет отправлена автоматически");
+        setCart(new Map());
+        setClientUuid(crypto.randomUUID());
+        await refreshPendingCount();
+      }
     }
     searchInputRef.current?.focus();
   }
@@ -400,7 +447,52 @@ export function PosScreen({ products: serverProducts }: { products: PosProduct[]
               >
                 Карта
               </Button>
+              <Button
+                type="button"
+                variant={paymentType === "debt" ? "default" : "outline"}
+                className="flex-1"
+                onClick={() => setPaymentType("debt")}
+              >
+                Долг
+              </Button>
             </div>
+
+            {paymentType === "debt" && (
+              <div className="flex flex-col gap-2 rounded-md border p-3">
+                <Select value={debtClientId} onValueChange={(v) => setDebtClientId(v ?? "")}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Выберите клиента" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.fullName} · {c.phone}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Платежей</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={24}
+                      value={installments}
+                      onChange={(e) => setInstallments(Number(e.target.value) || 1)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Первый платёж</label>
+                    <Input
+                      type="date"
+                      value={firstDueDate}
+                      onChange={(e) => setFirstDueDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             <Button
               type="button"
