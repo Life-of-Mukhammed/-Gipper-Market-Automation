@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { PencilIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +29,17 @@ type Product = {
   minStockThreshold: number;
 };
 
-export function ProductFormDialog({ product }: { product?: Product }) {
+export function ProductFormDialog({
+  product,
+  compact,
+  onSaved,
+}: {
+  product?: Product;
+  /** Icon-only trigger button, for use inside tight layouts like the POS grid. */
+  compact?: boolean;
+  /** Called after a successful save, in addition to router.refresh(). */
+  onSaved?: () => void;
+}) {
   const isEdit = Boolean(product);
   const action = isEdit ? updateProduct : createProduct;
   const [error, setError] = useState<string | null>(null);
@@ -47,19 +58,27 @@ export function ProductFormDialog({ product }: { product?: Product }) {
         setError(null);
         setOpen(false);
         router.refresh();
+        onSaved?.();
       }
     });
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
-        render={
-          <Button variant={isEdit ? "outline" : "default"} size={isEdit ? "sm" : "default"} />
-        }
-      >
-        {isEdit ? "Изменить" : "Добавить товар"}
-      </DialogTrigger>
+      {compact ? (
+        <DialogTrigger render={<Button type="button" variant="outline" size="icon-sm" />}>
+          <PencilIcon className="size-3.5" />
+          <span className="sr-only">Изменить товар</span>
+        </DialogTrigger>
+      ) : (
+        <DialogTrigger
+          render={
+            <Button variant={isEdit ? "outline" : "default"} size={isEdit ? "sm" : "default"} />
+          }
+        >
+          {isEdit ? "Изменить" : "Добавить товар"}
+        </DialogTrigger>
+      )}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{isEdit ? "Изменить товар" : "Новый товар"}</DialogTitle>

@@ -19,6 +19,7 @@ import {
   type DebtPlanInput,
 } from "./actions";
 import { QuickAddClientDialog } from "./quick-add-client-dialog";
+import { ProductFormDialog } from "../tovar/product-form-dialog";
 import {
   cacheClients,
   cacheProducts,
@@ -39,7 +40,11 @@ export type PosProduct = {
   stockQty: number;
 };
 
-type BrowseProduct = PosProduct & { minStockThreshold?: number };
+type BrowseProduct = PosProduct & {
+  minStockThreshold?: number;
+  category?: string | null;
+  purchasePrice?: string;
+};
 
 export type PosClient = {
   id: string;
@@ -236,6 +241,24 @@ export function PosScreen() {
       setGridHasMore(false);
     }
     setGridLoading(false);
+  }
+
+  // Re-fetches from the first page, used after an inline product edit so
+  // the card reflects the new name/price/stock right away.
+  async function refetchGridFromStart() {
+    if (!navigator.onLine) return;
+    try {
+      const { items, hasMore } = await browseProducts({
+        category: activeCategory,
+        query: search,
+        offset: 0,
+      });
+      setGridItems(items);
+      setGridHasMore(hasMore);
+      setGridOffset(items.length);
+    } catch {
+      // ignore — the stale card just won't reflect the edit until the next search/category change
+    }
   }
 
   // Client search — same online/offline split.
@@ -457,33 +480,56 @@ export function PosScreen() {
                 const lowStock =
                   !outOfStock && p.minStockThreshold !== undefined && p.stockQty <= p.minStockThreshold;
                 return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    disabled={outOfStock}
-                    onClick={() => addToCart(p)}
-                    className={`relative flex flex-col gap-2 rounded-md border p-3 text-left transition-colors ${
-                      outOfStock
-                        ? "opacity-50 cursor-not-allowed"
-                        : "hover:border-primary hover:bg-accent cursor-pointer"
-                    }`}
-                  >
+                  <div key={p.id} className="relative">
+                    {/* Sibling of the add-to-cart button (not nested inside
+                        it) — a Dialog trigger nested in a <button> would be
+                        invalid HTML, and its portaled content would still
+                        bubble clicks up through React's tree either way. */}
+                    <div className="absolute top-1.5 left-1.5 z-10">
+                      <ProductFormDialog
+                        compact
+                        product={{
+                          id: p.id,
+                          skuCode: p.skuCode,
+                          barcode: p.barcode,
+                          name: p.name,
+                          unit: p.unit,
+                          category: p.category ?? null,
+                          purchasePrice: p.purchasePrice ?? "0",
+                          salePrice: p.salePrice,
+                          stockQty: p.stockQty,
+                          minStockThreshold: p.minStockThreshold ?? 0,
+                        }}
+                        onSaved={refetchGridFromStart}
+                      />
+                    </div>
                     {lowStock && (
-                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-medium text-destructive-foreground">
+                      <span className="absolute -top-1.5 -right-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-medium text-destructive-foreground">
                         {p.stockQty}
                       </span>
                     )}
-                    <div className="flex h-14 w-14 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                      <PackageIcon className="size-6" />
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium leading-snug line-clamp-2">{p.name}</span>
-                      <span className="text-sm font-semibold">{formatMoney(Number(p.salePrice))} сум</span>
-                      <span className={`text-xs ${outOfStock ? "text-destructive" : "text-muted-foreground"}`}>
-                        {outOfStock ? "нет в наличии" : `ост. ${p.stockQty} ${p.unit}`}
-                      </span>
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      disabled={outOfStock}
+                      onClick={() => addToCart(p)}
+                      className={`flex w-full flex-col gap-2 rounded-md border p-3 text-left transition-colors ${
+                        outOfStock
+                          ? "opacity-50 cursor-not-allowed"
+                          : "hover:border-primary hover:bg-accent cursor-pointer"
+                      }`}
+                    >
+                      <div className="flex h-14 w-14 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                        <PackageIcon className="size-6" />
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm font-medium leading-snug line-clamp-2">{p.name}</span>
+                        <span className="text-sm font-semibold">{formatMoney(Number(p.salePrice))} сум</span>
+                        <span className={`text-xs ${outOfStock ? "text-destructive" : "text-muted-foreground"}`}>
+                          {outOfStock ? "нет в наличии" : `ост. ${p.stockQty} ${p.unit}`}
+                        </span>
+                      </div>
+                    </button>
+                  </div>
                 );
               })}
             </div>

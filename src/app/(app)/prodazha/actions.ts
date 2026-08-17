@@ -51,6 +51,8 @@ const POS_PRODUCT_COLUMNS = {
   barcode: products.barcode,
   name: products.name,
   unit: products.unit,
+  category: products.category,
+  purchasePrice: products.purchasePrice,
   salePrice: products.salePrice,
   stockQty: products.stockQty,
   minStockThreshold: products.minStockThreshold,
