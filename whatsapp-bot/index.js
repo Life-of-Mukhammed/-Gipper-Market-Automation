@@ -1,8 +1,13 @@
+import { rm } from "fs/promises";
 import express from "express";
 import QRCode from "qrcode";
 import pkg from "pg";
 import pino from "pino";
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  Browsers,
+} from "@whiskeysockets/baileys";
 
 const { Pool } = pkg;
 
@@ -12,6 +17,10 @@ const POLL_INTERVAL_MS = 5000;
 const REMINDER_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly; the endpoint
 // itself is idempotent per day, so more frequent checks just mean a debt
 // due today gets reminded within an hour of the check window, not instantly
+
+function randomDelay(minMs, maxMs) {
+  return new Promise((resolve) => setTimeout(resolve, minMs + Math.random() * (maxMs - minMs)));
+}
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const logger = pino({ level: "warn" });
@@ -42,6 +51,10 @@ async function sendPendingMessages() {
       .catch(() => {});
     try {
       const jid = `${digitsOnly(job.phone)}@s.whatsapp.net`;
+      // A human never fires messages back-to-back at machine speed; a
+      // random pause between sends is one of the cheapest ways to avoid
+      // looking like bulk/bot traffic to WhatsApp's abuse detection.
+      await randomDelay(2000, 6000);
       await sock.sendMessage(jid, { text: job.message });
       await pool.query(
         `update notification_jobs set status = 'sent', sent_at = now() where id = $1`,
@@ -58,6 +71,8 @@ async function sendPendingMessages() {
   }
 }
 
+let reconnectAttempts = 0;
+
 async function connectWhatsapp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
@@ -65,6 +80,13 @@ async function connectWhatsapp() {
     auth: state,
     logger,
     printQRInTerminal: false,
+    // A stock/default fingerprint is itself a weak signal of automated
+    // traffic; presenting as an ordinary desktop browser blends in with
+    // real WhatsApp Web sessions.
+    browser: Browsers.macOS("Desktop"),
+    // Broadcasting "online" the instant a bot connects (and keeping it
+    // pinned online) is a classic bot tell — let presence stay implicit.
+    markOnlineOnConnect: false,
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -81,6 +103,7 @@ async function connectWhatsapp() {
     if (connection === "open") {
       connectionStatus = "connected";
       latestQrDataUrl = null;
+      reconnectAttempts = 0;
       console.log("WhatsApp connected");
     }
 
@@ -88,11 +111,25 @@ async function connectWhatsapp() {
       connectionStatus = "disconnected";
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log("Connection closed. Reconnecting:", shouldReconnect);
+      console.log("Connection closed. Reconnecting:", shouldReconnect, "code:", statusCode);
       if (shouldReconnect) {
-        setTimeout(connectWhatsapp, 3000);
+        // Back off on repeated disconnects instead of hammering WhatsApp
+        // with immediate reconnects, which itself looks automated.
+        reconnectAttempts++;
+        const delay = Math.min(3000 * 2 ** (reconnectAttempts - 1), 60000);
+        setTimeout(connectWhatsapp, delay);
       } else {
         connectionStatus = "logged_out";
+        console.log(
+          "Logged out by WhatsApp (device removed or session revoked). " +
+            "Clearing stale credentials and generating a fresh QR — open /qr to relink.",
+        );
+        // Stale creds on disk would otherwise be reloaded on the next
+        // attempt and immediately rejected by WhatsApp again; wipe them so
+        // useMultiFileAuthState starts clean and actually offers a new QR.
+        await rm(AUTH_DIR, { recursive: true, force: true }).catch(() => {});
+        reconnectAttempts = 0;
+        setTimeout(connectWhatsapp, 2000);
       }
     }
   });
