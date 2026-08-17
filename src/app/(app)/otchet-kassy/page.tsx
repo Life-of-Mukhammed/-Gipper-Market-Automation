@@ -37,7 +37,8 @@ export default async function OtchetKassyPage() {
         .where(eq(products.isActive, true)),
     ]);
 
-  const netPosition = Number(cashBalance) + Number(totalReceivable) - Number(totalPayable);
+  const netPosition =
+    Number(cashBalance) + Number(totalReceivable) - Number(totalPayable) + Number(stockCostValue);
 
   return (
     <div className="flex-1 flex flex-col">
@@ -76,7 +77,9 @@ export default async function OtchetKassyPage() {
             </Card>
             <Card>
               <CardContent className="py-4">
-                <div className="text-sm text-muted-foreground">Итого (касса + нам − мы)</div>
+                <div className="text-sm text-muted-foreground">
+                  Итого (касса + нам − мы + товар по закупке)
+                </div>
                 <div className={`text-xl font-semibold ${netPosition < 0 ? "text-destructive" : ""}`}>
                   {netPosition.toLocaleString("ru-RU")}
                 </div>
