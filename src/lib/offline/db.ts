@@ -22,6 +22,7 @@ export type OutboxSale = {
   items: { productId: string; qty: number }[];
   paymentType: "cash" | "card";
   total: number;
+  discount: number;
   createdAt: number;
   status: "pending" | "syncing" | "failed";
   lastError?: string;

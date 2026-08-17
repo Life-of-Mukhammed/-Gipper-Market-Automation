@@ -6,6 +6,8 @@ import { PackageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   checkoutSale,
   getClientsBatch,
@@ -66,6 +68,7 @@ function saveSaleToOutbox(sale: {
   items: { productId: string; qty: number }[];
   paymentType: "cash" | "card";
   total: number;
+  discount: number;
 }) {
   return queueOfflineSale({ ...sale, createdAt: Date.now(), status: "pending" });
 }
@@ -108,6 +111,8 @@ export function PosScreen() {
   const [clientResults, setClientResults] = useState<PosClient[]>([]);
 
   const [paymentType, setPaymentType] = useState<"cash" | "card" | "debt">("cash");
+  const [discount, setDiscount] = useState(0);
+  const [installmentPlanEnabled, setInstallmentPlanEnabled] = useState(false);
   const [installments, setInstallments] = useState(1);
   const [firstDueDate, setFirstDueDate] = useState(defaultFirstDueDate);
   const [markupPercent, setMarkupPercent] = useState(0);
@@ -303,10 +308,12 @@ export function PosScreen() {
   }
 
   const lines = Array.from(cart.values());
-  const total = lines.reduce(
+  const subtotal = lines.reduce(
     (sum, l) => sum + Number(l.product.salePrice) * l.qty,
     0,
   );
+  const clampedDiscount = Math.max(0, Math.min(subtotal, discount || 0));
+  const total = subtotal - clampedDiscount;
 
   async function handleCheckout() {
     if (lines.length === 0) return;
@@ -318,6 +325,9 @@ export function PosScreen() {
     const items = lines.map((l) => ({ productId: l.product.id, qty: l.qty }));
     const uuid = clientUuid;
     const clientId = resolvedClient.id;
+    // Installment plan fields are optional — when the cashier hasn't turned
+    // them on, the debt is still recorded (single payment, no markup) using
+    // these already-sane defaults.
     const debtPlan: DebtPlanInput | undefined =
       paymentType === "debt" ? { installments, firstDueDate, markupPercent } : undefined;
 
@@ -326,6 +336,8 @@ export function PosScreen() {
       setClientUuid(crypto.randomUUID());
       setResolvedClient(null);
       setClientQuery("");
+      setDiscount(0);
+      setInstallmentPlanEnabled(false);
       setInstallments(1);
       setMarkupPercent(0);
     }
@@ -336,7 +348,7 @@ export function PosScreen() {
         toast.error("Продажа в долг недоступна офлайн — дождитесь подключения к интернету");
         return;
       }
-      await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total });
+      await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total, discount: clampedDiscount });
       // optimistic local stock decrement so this cashier doesn't oversell
       // against their own cached view while offline
       const decremented = offlineCatalog.map((p) => {
@@ -354,7 +366,10 @@ export function PosScreen() {
     }
 
     try {
-      const res = await checkoutSale(uuid, items, paymentType, clientId, { debtPlan });
+      const res = await checkoutSale(uuid, items, paymentType, clientId, {
+        debtPlan,
+        discount: clampedDiscount,
+      });
       setCheckingOut(false);
 
       if (res.ok) {
@@ -372,7 +387,7 @@ export function PosScreen() {
       if (paymentType === "debt") {
         toast.error("Не удалось оформить продажу в долг — попробуйте ещё раз");
       } else {
-        await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total });
+        await saveSaleToOutbox({ clientUuid: uuid, clientId, items, paymentType, total, discount: clampedDiscount });
         toast.warning("Нет соединения — продажа сохранена локально и будет отправлена автоматически");
         resetForm();
         await refreshPendingCount();
@@ -598,6 +613,25 @@ export function PosScreen() {
           </div>
 
           <div className="rounded-md border bg-background p-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Скидка, сум</label>
+                {clampedDiscount > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    Подытог: {formatMoney(subtotal)} сум
+                  </span>
+                )}
+              </div>
+              <Input
+                type="number"
+                min={0}
+                max={subtotal}
+                value={discount}
+                onChange={(e) => setDiscount(Number(e.target.value) || 0)}
+                placeholder="0"
+              />
+            </div>
+
             <div className="flex items-center justify-between text-lg font-semibold">
               <span>Итого</span>
               <span>{formatMoney(total)} сум</span>
@@ -632,41 +666,67 @@ export function PosScreen() {
 
             {paymentType === "debt" && (
               <div className="flex flex-col gap-2 rounded-md border p-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Платежей</label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={24}
-                      value={installments}
-                      onChange={(e) => setInstallments(Number(e.target.value) || 1)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-muted-foreground">Первый платёж</label>
-                    <Input
-                      type="date"
-                      value={firstDueDate}
-                      onChange={(e) => setFirstDueDate(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Наценка за рассрочку, %</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step="0.1"
-                    value={markupPercent}
-                    onChange={(e) => setMarkupPercent(Number(e.target.value) || 0)}
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="installment-plan-toggle" className="text-sm">
+                    Рассрочка (платежи и наценка)
+                  </Label>
+                  <Switch
+                    id="installment-plan-toggle"
+                    checked={installmentPlanEnabled}
+                    onCheckedChange={(checked) => {
+                      setInstallmentPlanEnabled(checked);
+                      if (!checked) {
+                        setInstallments(1);
+                        setFirstDueDate(defaultFirstDueDate());
+                        setMarkupPercent(0);
+                      }
+                    }}
                   />
                 </div>
-                {markupPercent > 0 && (
+                {!installmentPlanEnabled && (
                   <p className="text-xs text-muted-foreground">
-                    Долг с наценкой: {formatMoney(total * (1 + markupPercent / 100))} сум
+                    Простой долг без графика — вся сумма к оплате целиком.
                   </p>
+                )}
+                {installmentPlanEnabled && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground">Платежей</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={24}
+                          value={installments}
+                          onChange={(e) => setInstallments(Number(e.target.value) || 1)}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-muted-foreground">Первый платёж</label>
+                        <Input
+                          type="date"
+                          value={firstDueDate}
+                          onChange={(e) => setFirstDueDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-muted-foreground">Наценка за рассрочку, %</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="0.1"
+                        value={markupPercent}
+                        onChange={(e) => setMarkupPercent(Number(e.target.value) || 0)}
+                      />
+                    </div>
+                    {markupPercent > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Долг с наценкой: {formatMoney(total * (1 + markupPercent / 100))} сум
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             )}

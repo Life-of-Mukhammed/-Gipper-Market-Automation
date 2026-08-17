@@ -56,6 +56,7 @@ export async function syncPendingOutbox(): Promise<{ synced: number; failed: num
     try {
       const res = await checkoutSale(sale.clientUuid, sale.items, sale.paymentType, sale.clientId, {
         allowNegativeStock: true,
+        discount: sale.discount,
       });
       if (res.ok) {
         await db.outbox.delete(sale.clientUuid);

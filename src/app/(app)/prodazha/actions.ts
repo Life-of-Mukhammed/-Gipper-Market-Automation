@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, gte, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, ilike, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
 import {
@@ -101,12 +101,13 @@ export async function getProductCategories(): Promise<string[]> {
   return rows.map((r) => r.category).filter((c): c is string => !!c);
 }
 
-const BROWSE_PAGE_SIZE = 40;
+const BROWSE_PAGE_SIZE = 100;
 
 /**
  * Paginated grid browse (as opposed to searchProductsOnline's small
  * type-ahead result set) — backs the clickable product grid so cashiers can
- * browse/tap instead of only typing exact names.
+ * browse/tap instead of only typing exact names. Only in-stock items are
+ * shown — a zero-stock item can't be sold, so listing it just adds noise.
  */
 export async function browseProducts(opts: {
   category: string | null;
@@ -116,6 +117,7 @@ export async function browseProducts(opts: {
   const q = opts.query.trim();
   const where = and(
     eq(products.isActive, true),
+    gt(products.stockQty, 0),
     opts.category ? eq(products.category, opts.category) : undefined,
     q
       ? or(
@@ -192,7 +194,7 @@ export async function checkoutSale(
   items: CartItemInput[],
   paymentType: "cash" | "card" | "debt",
   clientId: string,
-  opts?: { allowNegativeStock?: boolean; debtPlan?: DebtPlanInput },
+  opts?: { allowNegativeStock?: boolean; debtPlan?: DebtPlanInput; discount?: number },
 ): Promise<CheckoutResult> {
   const user = await getCurrentUser();
   if (!user) {
@@ -249,7 +251,8 @@ export async function checkoutSale(
         (sum, item) => sum + Number(catalogById.get(item.productId)!.salePrice) * item.qty,
         0,
       );
-      const total = subtotal;
+      const discount = Math.max(0, Math.min(subtotal, opts?.discount || 0));
+      const total = subtotal - discount;
 
       const [sale] = await tx
         .insert(sales)
@@ -260,7 +263,7 @@ export async function checkoutSale(
           paymentType,
           clientId,
           subtotal: subtotal.toFixed(2),
-          discount: "0",
+          discount: discount.toFixed(2),
           total: total.toFixed(2),
           syncStatus: "synced",
         })
