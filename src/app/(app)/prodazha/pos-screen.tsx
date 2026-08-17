@@ -85,9 +85,12 @@ export function PosScreen({
   const [firstDueDate, setFirstDueDate] = useState(defaultFirstDueDate);
   const [checkingOut, setCheckingOut] = useState(false);
   const [clientUuid, setClientUuid] = useState(() => crypto.randomUUID());
-  const [isOnline, setIsOnline] = useState(
-    () => typeof navigator === "undefined" || navigator.onLine,
-  );
+  // Always starts true to match the server-rendered markup exactly (Node
+  // has no `navigator`, so SSR can't know real connectivity). Corrected
+  // client-side immediately after mount in the effect below — doing it any
+  // earlier would make the first client render diverge from the SSR HTML
+  // and trigger a hydration mismatch.
+  const [isOnline, setIsOnline] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,6 +120,9 @@ export function PosScreen({
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- navigator.onLine only exists in the browser; syncing it post-mount is required, not optional
+    setIsOnline(navigator.onLine);
+
     async function trySync() {
       if (navigator.onLine) {
         const { synced } = await syncPendingOutbox();
