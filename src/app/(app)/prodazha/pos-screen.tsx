@@ -2,21 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { PackageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   checkoutSale,
   getClientsBatch,
+  getProductCategories,
   getProductsBatch,
+  browseProducts,
   searchClientsOnline,
   searchProductsOnline,
   type DebtPlanInput,
@@ -41,6 +36,8 @@ export type PosProduct = {
   salePrice: string;
   stockQty: number;
 };
+
+type BrowseProduct = PosProduct & { minStockThreshold?: number };
 
 export type PosClient = {
   id: string;
@@ -99,8 +96,12 @@ export function PosScreen() {
 
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<PosProduct[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [gridItems, setGridItems] = useState<BrowseProduct[]>([]);
+  const [gridOffset, setGridOffset] = useState(0);
+  const [gridHasMore, setGridHasMore] = useState(false);
+  const [gridLoading, setGridLoading] = useState(false);
 
   const [resolvedClient, setResolvedClient] = useState<PosClient | null>(null);
   const [clientQuery, setClientQuery] = useState("");
@@ -130,6 +131,7 @@ export function PosScreen() {
     void getCachedClients().then(setOfflineClients);
 
     if (navigator.onLine) {
+      void getProductCategories().then(setCategories);
       void backgroundSyncCatalog(getProductsBatch, async (all) => {
         await cacheProducts(all);
         setOfflineCatalog(all);
@@ -184,27 +186,52 @@ export function PosScreen() {
     };
   }, []);
 
-  // Product search — debounced, server-backed while online, offline cache
-  // otherwise. Never depends on the full catalog being in memory.
+  // Product browse grid — debounced, server-backed page-at-a-time while
+  // online (category tabs + text filter), offline cache filter otherwise.
+  // Resets to the first page whenever the query or category changes.
   useEffect(() => {
-    const q = search.trim();
-    if (!q) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- flips a loading flag for the debounced fetch below; there's no derivable value to replace it with
-    setSearching(true);
+    setGridLoading(true);
     const timer = setTimeout(async () => {
       if (navigator.onLine) {
         try {
-          setResults(await searchProductsOnline(q));
+          const { items, hasMore } = await browseProducts({
+            category: activeCategory,
+            query: search,
+            offset: 0,
+          });
+          setGridItems(items);
+          setGridHasMore(hasMore);
+          setGridOffset(items.length);
         } catch {
-          setResults(filterLocalProducts(offlineCatalog, q));
+          setGridItems(filterLocalProducts(offlineCatalog, search));
+          setGridHasMore(false);
         }
       } else {
-        setResults(filterLocalProducts(offlineCatalog, q));
+        setGridItems(filterLocalProducts(offlineCatalog, search));
+        setGridHasMore(false);
       }
-      setSearching(false);
+      setGridLoading(false);
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, offlineCatalog]);
+  }, [search, activeCategory, offlineCatalog]);
+
+  async function loadMoreGrid() {
+    setGridLoading(true);
+    try {
+      const { items, hasMore } = await browseProducts({
+        category: activeCategory,
+        query: search,
+        offset: gridOffset,
+      });
+      setGridItems((prev) => [...prev, ...items]);
+      setGridHasMore(hasMore);
+      setGridOffset((prev) => prev + items.length);
+    } catch {
+      setGridHasMore(false);
+    }
+    setGridLoading(false);
+  }
 
   // Client search — same online/offline split.
   useEffect(() => {
@@ -225,14 +252,13 @@ export function PosScreen() {
   }, [clientQuery, offlineClients]);
 
   function addToCart(product: PosProduct) {
+    if (product.stockQty <= 0) return;
     setCart((prev) => {
       const next = new Map(prev);
       const existing = next.get(product.id);
       next.set(product.id, { product, qty: (existing?.qty ?? 0) + 1 });
       return next;
     });
-    setSearch("");
-    setResults([]);
     searchInputRef.current?.focus();
   }
 
@@ -264,19 +290,16 @@ export function PosScreen() {
     const q = search.trim();
     if (!q) return;
 
-    // A barcode scan resolves to exactly one match; typing that also
-    // matches one result naturally hits the same path.
-    if (results.length === 1) {
-      addToCart(results[0]);
-      return;
-    }
-
+    // A barcode scan resolves to exactly one exact sku/barcode match.
     const exact = navigator.onLine
       ? (await searchProductsOnline(q).catch(() => []))[0]
       : offlineCatalog.find(
           (p) => p.barcode?.toLowerCase() === q.toLowerCase() || p.skuCode.toLowerCase() === q.toLowerCase(),
         );
-    if (exact) addToCart(exact);
+    if (exact) {
+      addToCart(exact);
+      setSearch("");
+    }
   }
 
   const lines = Array.from(cart.values());
@@ -369,86 +392,173 @@ export function PosScreen() {
         )}
       </div>
 
-      <div className="flex-1 flex flex-col lg:flex-row gap-4 p-4">
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 p-4 min-h-0">
+        {/* LEFT: browse & search */}
         <div className="flex-1 flex flex-col gap-3 min-w-0">
-          <div className="relative">
-            <Input
-              ref={searchInputRef}
-              autoFocus
-              placeholder="Сканируйте штрихкод или введите артикул / название..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-            />
-            {search.trim() && (results.length > 0 || searching) && (
-              <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-80 overflow-y-auto">
-                {results.map((p) => (
+          <Input
+            ref={searchInputRef}
+            autoFocus
+            placeholder="Сканируйте штрихкод или введите артикул / название..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+          />
+
+          {isOnline && categories.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={activeCategory === null ? "default" : "outline"}
+                className="shrink-0"
+                onClick={() => setActiveCategory(null)}
+              >
+                Все
+              </Button>
+              {categories.map((c) => (
+                <Button
+                  key={c}
+                  type="button"
+                  size="sm"
+                  variant={activeCategory === c ? "default" : "outline"}
+                  className="shrink-0"
+                  onClick={() => setActiveCategory(c)}
+                >
+                  {c}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto rounded-md border bg-background p-3">
+            {gridItems.length === 0 && !gridLoading && (
+              <p className="text-center text-muted-foreground py-10">
+                Ничего не найдено
+              </p>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+              {gridItems.map((p) => {
+                const outOfStock = p.stockQty <= 0;
+                const lowStock =
+                  !outOfStock && p.minStockThreshold !== undefined && p.stockQty <= p.minStockThreshold;
+                return (
                   <button
                     key={p.id}
                     type="button"
+                    disabled={outOfStock}
                     onClick={() => addToCart(p)}
-                    className="w-full text-left px-3 py-2 hover:bg-accent flex items-center justify-between gap-2 text-sm"
+                    className={`relative flex flex-col gap-2 rounded-md border p-3 text-left transition-colors ${
+                      outOfStock
+                        ? "opacity-50 cursor-not-allowed"
+                        : "hover:border-primary hover:bg-accent cursor-pointer"
+                    }`}
                   >
-                    <span className="flex flex-col">
-                      <span>{p.name}</span>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {p.skuCode}
-                        {p.barcode ? ` · ${p.barcode}` : ""}
+                    {lowStock && (
+                      <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-medium text-destructive-foreground">
+                        {p.stockQty}
                       </span>
-                    </span>
-                    <span className="flex items-center gap-2 whitespace-nowrap">
-                      <span className="font-medium">{formatMoney(Number(p.salePrice))}</span>
-                      <span
-                        className={
-                          p.stockQty <= 0 ? "text-destructive text-xs" : "text-xs text-muted-foreground"
-                        }
-                      >
-                        ост. {p.stockQty}
+                    )}
+                    <div className="flex h-14 w-14 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                      <PackageIcon className="size-6" />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium leading-snug line-clamp-2">{p.name}</span>
+                      <span className="text-sm font-semibold">{formatMoney(Number(p.salePrice))} сум</span>
+                      <span className={`text-xs ${outOfStock ? "text-destructive" : "text-muted-foreground"}`}>
+                        {outOfStock ? "нет в наличии" : `ост. ${p.stockQty} ${p.unit}`}
                       </span>
-                    </span>
+                    </div>
                   </button>
-                ))}
-                {searching && results.length === 0 && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">Поиск...</div>
+                );
+              })}
+            </div>
+            {gridHasMore && (
+              <div className="flex justify-center pt-4">
+                <Button type="button" variant="outline" size="sm" onClick={loadMoreGrid} disabled={gridLoading}>
+                  {gridLoading ? "Загрузка..." : "Показать ещё"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT: cart, client, payment */}
+        <div className="lg:w-96 flex flex-col gap-3 lg:h-full">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-muted-foreground">Клиент *</label>
+              <QuickAddClientDialog
+                onCreated={(c) => {
+                  setResolvedClient(c);
+                  setClientQuery("");
+                  setClientResults([]);
+                }}
+              />
+            </div>
+            {resolvedClient ? (
+              <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                <span>
+                  {resolvedClient.fullName} · <span className="font-mono">{resolvedClient.phone}</span>
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setResolvedClient(null)}
+                >
+                  Изменить
+                </Button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Input
+                  placeholder="Поиск по имени или телефону..."
+                  value={clientQuery}
+                  onChange={(e) => setClientQuery(e.target.value)}
+                />
+                {clientQuery.trim() && clientResults.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-60 overflow-y-auto">
+                    {clientResults.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setResolvedClient(c);
+                          setClientQuery("");
+                          setClientResults([]);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                      >
+                        {c.fullName} · <span className="font-mono text-xs">{c.phone}</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
           </div>
 
-          <div className="rounded-md border bg-background flex-1">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Товар</TableHead>
-                  <TableHead className="text-right">Цена</TableHead>
-                  <TableHead className="text-right w-32">Кол-во</TableHead>
-                  <TableHead className="text-right">Сумма</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lines.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
-                      Корзина пуста. Отсканируйте товар или найдите его через поиск.
-                    </TableCell>
-                  </TableRow>
-                )}
-                {lines.map((l) => (
-                  <TableRow key={l.product.id}>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span>{l.product.name}</span>
-                        <span className="text-xs text-muted-foreground font-mono">
-                          {l.product.skuCode}
-                        </span>
+          <div className="flex-1 flex flex-col rounded-md border bg-background min-h-0">
+            <div className="px-3 py-2 border-b text-sm font-medium">Корзина</div>
+            <div className="flex-1 overflow-y-auto">
+              {lines.length === 0 ? (
+                <p className="text-center text-muted-foreground text-sm py-10 px-3">
+                  Корзина пуста. Нажмите на товар слева, чтобы добавить.
+                </p>
+              ) : (
+                <div className="flex flex-col divide-y">
+                  {lines.map((l) => (
+                    <div key={l.product.id} className="flex items-center gap-2 px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm truncate">{l.product.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatMoney(Number(l.product.salePrice))} × {l.qty} ={" "}
+                          <span className="font-medium text-foreground">
+                            {formatMoney(Number(l.product.salePrice) * l.qty)}
+                          </span>
+                        </div>
                       </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatMoney(Number(l.product.salePrice))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center gap-1 shrink-0">
                         <Button
                           type="button"
                           variant="outline"
@@ -461,7 +571,7 @@ export function PosScreen() {
                           type="number"
                           value={l.qty}
                           onChange={(e) => setQty(l.product.id, Number(e.target.value) || 0)}
-                          className="w-14 text-center"
+                          className="w-12 text-center px-1"
                         />
                         <Button
                           type="button"
@@ -471,84 +581,23 @@ export function PosScreen() {
                         >
                           +
                         </Button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatMoney(Number(l.product.salePrice) * l.qty)}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeFromCart(l.product.id)}
-                      >
-                        ✕
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-
-        <div className="lg:w-80 flex flex-col gap-3">
-          <div className="rounded-md border bg-background p-4 flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-muted-foreground">Клиент *</label>
-                <QuickAddClientDialog
-                  onCreated={(c) => {
-                    setResolvedClient(c);
-                    setClientQuery("");
-                    setClientResults([]);
-                  }}
-                />
-              </div>
-              {resolvedClient ? (
-                <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-                  <span>
-                    {resolvedClient.fullName} · <span className="font-mono">{resolvedClient.phone}</span>
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setResolvedClient(null)}
-                  >
-                    Изменить
-                  </Button>
-                </div>
-              ) : (
-                <div className="relative">
-                  <Input
-                    placeholder="Поиск по имени или телефону..."
-                    value={clientQuery}
-                    onChange={(e) => setClientQuery(e.target.value)}
-                  />
-                  {clientQuery.trim() && clientResults.length > 0 && (
-                    <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-60 overflow-y-auto">
-                      {clientResults.map((c) => (
-                        <button
-                          key={c.id}
+                        <Button
                           type="button"
-                          onClick={() => {
-                            setResolvedClient(c);
-                            setClientQuery("");
-                            setClientResults([]);
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => removeFromCart(l.product.id)}
                         >
-                          {c.fullName} · <span className="font-mono text-xs">{c.phone}</span>
-                        </button>
-                      ))}
+                          ✕
+                        </Button>
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               )}
             </div>
+          </div>
 
+          <div className="rounded-md border bg-background p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between text-lg font-semibold">
               <span>Итого</span>
               <span>{formatMoney(total)} сум</span>
@@ -638,7 +687,8 @@ export function PosScreen() {
 }
 
 function filterLocalProducts(catalog: PosProduct[], q: string) {
-  const query = q.toLowerCase();
+  const query = q.trim().toLowerCase();
+  if (!query) return catalog.slice(0, 60);
   return catalog
     .filter(
       (p) =>
@@ -646,7 +696,7 @@ function filterLocalProducts(catalog: PosProduct[], q: string) {
         p.barcode?.toLowerCase().includes(query) ||
         p.name.toLowerCase().includes(query),
     )
-    .slice(0, 8);
+    .slice(0, 60);
 }
 
 function filterLocalClients(list: PosClient[], q: string) {

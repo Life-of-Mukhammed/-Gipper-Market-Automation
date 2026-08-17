@@ -53,6 +53,7 @@ const POS_PRODUCT_COLUMNS = {
   unit: products.unit,
   salePrice: products.salePrice,
   stockQty: products.stockQty,
+  minStockThreshold: products.minStockThreshold,
 };
 
 /**
@@ -88,6 +89,52 @@ export async function searchProductsOnline(query: string) {
       ),
     )
     .limit(8);
+}
+
+/** Distinct category tags for the browse-grid's filter tabs. */
+export async function getProductCategories(): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ category: products.category })
+    .from(products)
+    .where(and(eq(products.isActive, true), sql`${products.category} is not null`))
+    .orderBy(asc(products.category));
+  return rows.map((r) => r.category).filter((c): c is string => !!c);
+}
+
+const BROWSE_PAGE_SIZE = 40;
+
+/**
+ * Paginated grid browse (as opposed to searchProductsOnline's small
+ * type-ahead result set) — backs the clickable product grid so cashiers can
+ * browse/tap instead of only typing exact names.
+ */
+export async function browseProducts(opts: {
+  category: string | null;
+  query: string;
+  offset: number;
+}) {
+  const q = opts.query.trim();
+  const where = and(
+    eq(products.isActive, true),
+    opts.category ? eq(products.category, opts.category) : undefined,
+    q
+      ? or(
+          ilike(products.name, `%${q}%`),
+          ilike(products.skuCode, `%${q}%`),
+          ilike(products.barcode, `%${q}%`),
+        )
+      : undefined,
+  );
+
+  const items = await db
+    .select(POS_PRODUCT_COLUMNS)
+    .from(products)
+    .where(where)
+    .orderBy(asc(products.name))
+    .limit(BROWSE_PAGE_SIZE)
+    .offset(opts.offset);
+
+  return { items, hasMore: items.length === BROWSE_PAGE_SIZE };
 }
 
 export async function searchClientsOnline(query: string) {
