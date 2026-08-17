@@ -48,6 +48,7 @@ export async function createClientForPos(formData: FormData): Promise<CreateClie
 export type DebtPlanInput = {
   installments: number;
   firstDueDate: string; // YYYY-MM-DD
+  markupPercent: number;
 };
 
 type CheckoutResult =
@@ -225,21 +226,30 @@ export async function checkoutSale(
         });
       }
 
+      let debtTotal = 0;
+      let markupAmount = 0;
+
       if (paymentType === "debt" && opts?.debtPlan) {
+        const markupPercent = Math.max(0, Math.min(100, opts.debtPlan.markupPercent || 0));
+        markupAmount = Math.round(total * (markupPercent / 100) * 100) / 100;
+        debtTotal = Math.round((total + markupAmount) * 100) / 100;
+
         const [debt] = await tx
           .insert(debts)
           .values({
             clientId,
             saleId: sale.id,
-            originalAmount: total.toFixed(2),
-            remainingBalance: total.toFixed(2),
+            originalAmount: debtTotal.toFixed(2),
+            remainingBalance: debtTotal.toFixed(2),
+            markupAmount: markupAmount.toFixed(2),
+            markupPercent: markupPercent.toFixed(2),
             status: "open",
           })
           .returning();
 
         const n = Math.max(1, Math.min(24, opts.debtPlan.installments));
-        const baseAmount = Math.floor((total / n) * 100) / 100;
-        const lastAmount = Math.round((total - baseAmount * (n - 1)) * 100) / 100;
+        const baseAmount = Math.floor((debtTotal / n) * 100) / 100;
+        const lastAmount = Math.round((debtTotal - baseAmount * (n - 1)) * 100) / 100;
         const firstDue = new Date(opts.debtPlan.firstDueDate);
 
         for (let i = 0; i < n; i++) {
@@ -256,7 +266,14 @@ export async function checkoutSale(
         }
       }
 
-      return { saleId: sale.id, total: total.toFixed(2), hadStockConflict, receiptItems };
+      return {
+        saleId: sale.id,
+        total: total.toFixed(2),
+        debtTotal: debtTotal.toFixed(2),
+        markupAmount: markupAmount.toFixed(2),
+        hadStockConflict,
+        receiptItems,
+      };
     });
 
     revalidatePath("/tovar");
@@ -264,11 +281,15 @@ export async function checkoutSale(
     revalidatePath("/klienty");
     revalidatePath("/dolgi");
 
+    const displayTotal = paymentType === "debt" ? result.debtTotal : result.total;
+
     void sendSaleReceipt(
       client,
       result.saleId,
       result.receiptItems,
       result.total,
+      displayTotal,
+      result.markupAmount,
       paymentType,
       opts?.debtPlan,
     );
@@ -276,7 +297,7 @@ export async function checkoutSale(
     return {
       ok: true,
       saleId: result.saleId,
-      total: result.total,
+      total: displayTotal,
       hadStockConflict: result.hadStockConflict,
     };
   } catch (err) {
@@ -296,7 +317,9 @@ async function sendSaleReceipt(
   client: typeof clients.$inferSelect,
   saleId: string,
   items: ReceiptItem[],
-  total: string,
+  subtotal: string,
+  displayTotal: string,
+  markupAmount: string,
   paymentType: "cash" | "card" | "debt",
   debtPlan?: DebtPlanInput,
 ) {
@@ -307,11 +330,17 @@ async function sendSaleReceipt(
     storeName,
     clientName: client.fullName,
     items,
-    total,
+    total: displayTotal,
     paymentType,
     createdAt: new Date(),
     debtSummary: debtPlan
-      ? { installments: debtPlan.installments, firstDueDate: debtPlan.firstDueDate }
+      ? {
+          subtotal,
+          markupAmount,
+          markupPercent: debtPlan.markupPercent || 0,
+          installments: debtPlan.installments,
+          firstDueDate: debtPlan.firstDueDate,
+        }
       : undefined,
   });
 

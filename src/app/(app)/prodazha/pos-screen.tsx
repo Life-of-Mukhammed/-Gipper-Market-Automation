@@ -88,6 +88,7 @@ export function PosScreen({
   const [clientId, setClientId] = useState<string>("");
   const [installments, setInstallments] = useState(1);
   const [firstDueDate, setFirstDueDate] = useState(defaultFirstDueDate);
+  const [markupPercent, setMarkupPercent] = useState(0);
   const [checkingOut, setCheckingOut] = useState(false);
   const [clientUuid, setClientUuid] = useState(() => crypto.randomUUID());
   // Always starts true to match the server-rendered markup exactly (Node
@@ -248,7 +249,7 @@ export function PosScreen({
     const items = lines.map((l) => ({ productId: l.product.id, qty: l.qty }));
     const uuid = clientUuid;
     const debtPlan: DebtPlanInput | undefined =
-      paymentType === "debt" ? { installments, firstDueDate } : undefined;
+      paymentType === "debt" ? { installments, firstDueDate, markupPercent } : undefined;
 
     if (!navigator.onLine) {
       if (paymentType === "debt") {
@@ -292,6 +293,7 @@ export function PosScreen({
         setClientUuid(crypto.randomUUID());
         setClientId("");
         setInstallments(1);
+        setMarkupPercent(0);
       } else {
         toast.error(res.error);
       }
@@ -503,25 +505,43 @@ export function PosScreen({
             </div>
 
             {paymentType === "debt" && (
-              <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+              <div className="flex flex-col gap-2 rounded-md border p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Платежей</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={24}
+                      value={installments}
+                      onChange={(e) => setInstallments(Number(e.target.value) || 1)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-muted-foreground">Первый платёж</label>
+                    <Input
+                      type="date"
+                      value={firstDueDate}
+                      onChange={(e) => setFirstDueDate(e.target.value)}
+                    />
+                  </div>
+                </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Платежей</label>
+                  <label className="text-xs text-muted-foreground">Наценка за рассрочку, %</label>
                   <Input
                     type="number"
-                    min={1}
-                    max={24}
-                    value={installments}
-                    onChange={(e) => setInstallments(Number(e.target.value) || 1)}
+                    min={0}
+                    max={100}
+                    step="0.1"
+                    value={markupPercent}
+                    onChange={(e) => setMarkupPercent(Number(e.target.value) || 0)}
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Первый платёж</label>
-                  <Input
-                    type="date"
-                    value={firstDueDate}
-                    onChange={(e) => setFirstDueDate(e.target.value)}
-                  />
-                </div>
+                {markupPercent > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Долг с наценкой: {formatMoney(total * (1 + markupPercent / 100))} сум
+                  </p>
+                )}
               </div>
             )}
 

@@ -9,6 +9,9 @@ const { Pool } = pkg;
 const AUTH_DIR = process.env.AUTH_DIR || "./auth";
 const PORT = process.env.PORT || 8080;
 const POLL_INTERVAL_MS = 5000;
+const REMINDER_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly; the endpoint
+// itself is idempotent per day, so more frequent checks just mean a debt
+// due today gets reminded within an hour of the check window, not instantly
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const logger = pino({ level: "warn" });
@@ -34,7 +37,9 @@ async function sendPendingMessages() {
   );
 
   for (const job of jobs) {
-    await pool.query(`update notification_jobs set status = 'sent' where id = $1`, [job.id]).catch(() => {});
+    await pool
+      .query(`update notification_jobs set status = 'sending' where id = $1`, [job.id])
+      .catch(() => {});
     try {
       const jid = `${digitsOnly(job.phone)}@s.whatsapp.net`;
       await sock.sendMessage(jid, { text: job.message });
@@ -122,9 +127,32 @@ app.listen(PORT, () => {
   console.log(`WhatsApp bot HTTP server listening on port ${PORT}`);
 });
 
+async function triggerReminderScan() {
+  const mainAppUrl = process.env.MAIN_APP_URL;
+  const cronSecret = process.env.CRON_SECRET;
+  if (!mainAppUrl) return;
+
+  try {
+    const res = await fetch(
+      `${mainAppUrl}/api/cron/reminders?secret=${encodeURIComponent(cronSecret || "")}`,
+    );
+    const body = await res.json();
+    console.log("reminder scan:", body);
+  } catch (err) {
+    console.error("reminder scan failed:", err.message);
+  }
+}
+
 setInterval(() => {
   sendPendingMessages().catch((err) => console.error("poll error:", err));
 }, POLL_INTERVAL_MS);
+
+setInterval(() => {
+  triggerReminderScan();
+}, REMINDER_CHECK_INTERVAL_MS);
+// also run once shortly after startup so a redeploy doesn't wait a full
+// hour before the first reminder scan of the day
+setTimeout(triggerReminderScan, 30000);
 
 connectWhatsapp().catch((err) => {
   console.error("Failed to start WhatsApp connection:", err);

@@ -21,6 +21,8 @@ export default async function DebtDetailPage({ params }: PageProps<"/dolgi/[id]"
       id: debts.id,
       remainingBalance: debts.remainingBalance,
       originalAmount: debts.originalAmount,
+      markupAmount: debts.markupAmount,
+      markupPercent: debts.markupPercent,
       status: debts.status,
       clientName: clients.fullName,
       clientPhone: clients.phone,
@@ -61,6 +63,14 @@ export default async function DebtDetailPage({ params }: PageProps<"/dolgi/[id]"
               {Number(debt.originalAmount).toLocaleString("ru-RU")}
             </div>
           </div>
+          {Number(debt.markupAmount) > 0 && (
+            <div>
+              <div className="text-sm text-muted-foreground">Наценка ({Number(debt.markupPercent)}%)</div>
+              <div className="text-lg font-semibold text-amber-600">
+                +{Number(debt.markupAmount).toLocaleString("ru-RU")}
+              </div>
+            </div>
+          )}
           <div>
             <div className="text-sm text-muted-foreground">Остаток</div>
             <div className="text-lg font-semibold text-destructive">

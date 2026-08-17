@@ -183,6 +183,8 @@ export const debts = pgTable("debts", {
   saleId: uuid("sale_id").references(() => sales.id),
   originalAmount: numeric("original_amount", { precision: 14, scale: 2 }).notNull(),
   remainingBalance: numeric("remaining_balance", { precision: 14, scale: 2 }).notNull(),
+  markupAmount: numeric("markup_amount", { precision: 14, scale: 2 }).notNull().default("0"),
+  markupPercent: numeric("markup_percent", { precision: 5, scale: 2 }).notNull().default("0"),
   status: text("status", { enum: ["open", "paid", "overdue"] })
     .notNull()
     .default("open"),
