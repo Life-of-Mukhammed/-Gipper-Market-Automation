@@ -1,4 +1,4 @@
-import { and, eq, ilike, or, sql } from "drizzle-orm";
+import { and, eq, gt, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { products } from "@/db/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,7 @@ export default async function AssortimentPage({
 
   const where = and(
     eq(products.isActive, true),
+    gt(products.stockQty, 0),
     query
       ? or(
           ilike(products.name, `%${query}%`),
