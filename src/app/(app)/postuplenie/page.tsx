@@ -20,6 +20,7 @@ export default async function PostupleniePage() {
         skuCode: products.skuCode,
         name: products.name,
         purchasePrice: products.purchasePrice,
+        salePrice: products.salePrice,
       })
       .from(products)
       .where(eq(products.isActive, true)),

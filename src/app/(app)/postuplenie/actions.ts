@@ -35,6 +35,7 @@ export type ReceivingItemInput = {
   productId: string;
   qty: number;
   unitCost: number;
+  salePrice?: number;
 };
 
 type ConfirmResult = { ok: true; documentId: string } | { ok: false; error: string };
@@ -79,6 +80,7 @@ export async function confirmReceiving(
           .set({
             stockQty: sql`${products.stockQty} + ${item.qty}`,
             purchasePrice: item.unitCost.toFixed(2),
+            ...(item.salePrice !== undefined ? { salePrice: item.salePrice.toFixed(2) } : {}),
             updatedAt: new Date(),
           })
           .where(eq(products.id, item.productId));

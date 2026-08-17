@@ -15,10 +15,16 @@ import {
 } from "@/components/ui/table";
 import { confirmReceiving } from "./actions";
 
-type Product = { id: string; skuCode: string; name: string; purchasePrice: string };
+type Product = {
+  id: string;
+  skuCode: string;
+  name: string;
+  purchasePrice: string;
+  salePrice: string;
+};
 type Supplier = { id: string; name: string };
 
-type Line = { product: Product; qty: number; unitCost: number };
+type Line = { product: Product; qty: number; unitCost: number; salePrice: number };
 
 export function ReceivingForm({
   products,
@@ -54,7 +60,10 @@ export function ReceivingForm({
   function addLine(product: Product) {
     setLines((prev) => {
       if (prev.some((l) => l.product.id === product.id)) return prev;
-      return [...prev, { product, qty: 1, unitCost: Number(product.purchasePrice) }];
+      return [
+        ...prev,
+        { product, qty: 1, unitCost: Number(product.purchasePrice), salePrice: Number(product.salePrice) },
+      ];
     });
     setSearch("");
     searchRef.current?.focus();
@@ -75,7 +84,12 @@ export function ReceivingForm({
     setSubmitting(true);
     const res = await confirmReceiving(
       supplierId || null,
-      lines.map((l) => ({ productId: l.product.id, qty: l.qty, unitCost: l.unitCost })),
+      lines.map((l) => ({
+        productId: l.product.id,
+        qty: l.qty,
+        unitCost: l.unitCost,
+        salePrice: l.salePrice,
+      })),
     );
     setSubmitting(false);
     if (res.ok) {
@@ -167,6 +181,7 @@ export function ReceivingForm({
               <TableHead>Товар</TableHead>
               <TableHead className="text-right w-28">Кол-во</TableHead>
               <TableHead className="text-right w-32">Цена закупки</TableHead>
+              <TableHead className="text-right w-32">Цена продажи</TableHead>
               <TableHead className="text-right">Сумма</TableHead>
               <TableHead />
             </TableRow>
@@ -174,7 +189,7 @@ export function ReceivingForm({
           <TableBody>
             {lines.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                   Добавьте товары для оприходования
                 </TableCell>
               </TableRow>
@@ -196,6 +211,16 @@ export function ReceivingForm({
                     value={l.unitCost}
                     onChange={(e) =>
                       updateLine(l.product.id, { unitCost: Number(e.target.value) || 0 })
+                    }
+                    className="w-24 text-center inline-block"
+                  />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Input
+                    type="number"
+                    value={l.salePrice}
+                    onChange={(e) =>
+                      updateLine(l.product.id, { salePrice: Number(e.target.value) || 0 })
                     }
                     className="w-24 text-center inline-block"
                   />
