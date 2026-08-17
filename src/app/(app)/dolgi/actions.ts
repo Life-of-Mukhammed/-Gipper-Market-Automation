@@ -40,13 +40,22 @@ export async function recordDebtPayment(
 
   let newBalanceForReceipt = 0;
   let clientIdForReceipt = "";
+  let appliedForReceipt = 0;
 
   try {
     await db.transaction(async (tx) => {
       const [debt] = await tx.select().from(debts).where(eq(debts.id, debtId)).for("update");
       if (!debt) throw new Error("Долг не найден");
 
-      let remaining = amount;
+      // The debt's own remainingBalance is the source of truth for how much
+      // this payment actually pays off — capped so a payment can never
+      // exceed what's owed. Payment-schedule installments (only present for
+      // debts created through the POS installment flow; legacy-imported
+      // debts have none) are just a best-effort breakdown on top of that,
+      // not the basis for the amount applied.
+      const appliedTotal = Math.min(amount, Number(debt.remainingBalance));
+
+      let remainingToDistribute = appliedTotal;
       const schedules = await tx
         .select()
         .from(paymentSchedules)
@@ -54,11 +63,11 @@ export async function recordDebtPayment(
         .orderBy(paymentSchedules.installmentNumber);
 
       for (const sch of schedules) {
-        if (remaining <= 0) break;
+        if (remainingToDistribute <= 0) break;
         const due = Number(sch.amountDue) - Number(sch.amountPaid);
         if (due <= 0) continue;
-        const applied = Math.min(due, remaining);
-        remaining -= applied;
+        const applied = Math.min(due, remainingToDistribute);
+        remainingToDistribute -= applied;
 
         const newPaid = Number(sch.amountPaid) + applied;
         await tx
@@ -78,7 +87,18 @@ export async function recordDebtPayment(
         });
       }
 
-      const appliedTotal = amount - remaining;
+      // No schedule covered the (remainder of the) payment — most commonly
+      // because this debt has no schedules at all. Still record it so
+      // payment history isn't silently dropped.
+      if (remainingToDistribute > 0) {
+        await tx.insert(debtPayments).values({
+          debtId,
+          amount: remainingToDistribute.toFixed(2),
+          cashAccountId: cashAccount.id,
+          cashierId: user.id,
+        });
+      }
+
       const newBalance = Math.max(0, Number(debt.remainingBalance) - appliedTotal);
 
       await tx
@@ -99,6 +119,7 @@ export async function recordDebtPayment(
 
       newBalanceForReceipt = newBalance;
       clientIdForReceipt = debt.clientId;
+      appliedForReceipt = appliedTotal;
     });
   } catch (err) {
     console.error(err);
@@ -108,7 +129,7 @@ export async function recordDebtPayment(
   revalidatePath("/dolgi");
   revalidatePath("/klienty");
 
-  void sendDebtPaymentReceipt(clientIdForReceipt, debtId, amount, newBalanceForReceipt);
+  void sendDebtPaymentReceipt(clientIdForReceipt, debtId, appliedForReceipt, newBalanceForReceipt);
 
   return { ok: true };
 }
