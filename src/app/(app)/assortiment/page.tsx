@@ -1,32 +1,36 @@
-import { and, eq, ilike, or } from "drizzle-orm";
+import { and, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { products } from "@/db/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PaginationControls } from "@/components/pagination-controls";
 import { SearchBox } from "./search-box";
+
+const PAGE_SIZE = 60;
 
 export default async function AssortimentPage({
   searchParams,
 }: PageProps<"/assortiment">) {
-  const { q } = await searchParams;
-  const query = typeof q === "string" ? q.trim() : "";
+  const sp = await searchParams;
+  const query = typeof sp.q === "string" ? sp.q.trim() : "";
+  const page = Math.max(1, Number(sp.page) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
 
-  const rows = await db
-    .select()
-    .from(products)
-    .where(
-      and(
-        eq(products.isActive, true),
-        query
-          ? or(
-              ilike(products.name, `%${query}%`),
-              ilike(products.skuCode, `%${query}%`),
-              ilike(products.barcode, `%${query}%`),
-            )
-          : undefined,
-      ),
-    )
-    .orderBy(products.name);
+  const where = and(
+    eq(products.isActive, true),
+    query
+      ? or(
+          ilike(products.name, `%${query}%`),
+          ilike(products.skuCode, `%${query}%`),
+          ilike(products.barcode, `%${query}%`),
+        )
+      : undefined,
+  );
+
+  const [rows, [{ count }]] = await Promise.all([
+    db.select().from(products).where(where).orderBy(products.name).limit(PAGE_SIZE).offset(offset),
+    db.select({ count: sql<number>`count(*)::int` }).from(products).where(where),
+  ]);
 
   return (
     <div className="flex-1 flex flex-col">
@@ -60,6 +64,12 @@ export default async function AssortimentPage({
             </Card>
           ))}
         </div>
+        <PaginationControls
+          page={page}
+          totalPages={Math.max(1, Math.ceil(count / PAGE_SIZE))}
+          total={count}
+          basePath="/assortiment"
+        />
       </main>
     </div>
   );

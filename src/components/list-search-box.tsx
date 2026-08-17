@@ -4,7 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 
-export function SearchBox() {
+export function ListSearchBox({
+  basePath,
+  placeholder,
+}: {
+  basePath: string;
+  placeholder: string;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [value, setValue] = useState(searchParams.get("q") ?? "");
@@ -18,7 +24,7 @@ export function SearchBox() {
       params.delete("q");
     }
     params.set("page", "1");
-    router.replace(`/assortiment?${params.toString()}`);
+    router.replace(`${basePath}?${params.toString()}`);
   }
 
   useEffect(() => {
@@ -29,8 +35,7 @@ export function SearchBox() {
 
   return (
     <Input
-      autoFocus
-      placeholder="Поиск по артикулу, штрихкоду или названию..."
+      placeholder={placeholder}
       value={value}
       onChange={(e) => {
         const v = e.target.value;
