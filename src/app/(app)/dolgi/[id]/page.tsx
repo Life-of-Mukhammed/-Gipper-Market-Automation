@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { clients, debts, paymentSchedules, debtPayments } from "@/db/schema";
+import { clients, debts, paymentSchedules, debtPayments, debtReminders } from "@/db/schema";
 import {
   Table,
   TableBody,
@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { RecordPaymentForm } from "./record-payment-form";
+import { WhatsappRemindersPanel } from "./whatsapp-reminders-panel";
+import { getCurrentUser } from "@/lib/auth";
 
 export default async function DebtDetailPage({ params }: PageProps<"/dolgi/[id]">) {
   const { id } = await params;
@@ -45,6 +47,21 @@ export default async function DebtDetailPage({ params }: PageProps<"/dolgi/[id]"
     .from(debtPayments)
     .where(eq(debtPayments.debtId, id))
     .orderBy(debtPayments.paidAt);
+
+  const reminders = await db
+    .select({
+      id: debtReminders.id,
+      reminderType: debtReminders.reminderType,
+      scheduledDate: debtReminders.scheduledDate,
+      status: debtReminders.status,
+      sentAt: debtReminders.sentAt,
+      errorMessage: debtReminders.errorMessage,
+    })
+    .from(debtReminders)
+    .where(eq(debtReminders.debtId, id))
+    .orderBy(debtReminders.scheduledDate);
+
+  const user = await getCurrentUser();
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -155,6 +172,15 @@ export default async function DebtDetailPage({ params }: PageProps<"/dolgi/[id]"
             </div>
           </div>
         )}
+
+        <WhatsappRemindersPanel
+          debtId={debt.id}
+          canTest={user?.role === "admin"}
+          reminders={reminders.map((r) => ({
+            ...r,
+            sentAt: r.sentAt ? r.sentAt.toISOString() : null,
+          }))}
+        />
       </main>
     </div>
   );

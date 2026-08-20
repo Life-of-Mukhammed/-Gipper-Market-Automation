@@ -226,6 +226,39 @@ export const debtPayments = pgTable("debt_payments", {
   paidAt: timestamp("paid_at").notNull().defaultNow(),
 });
 
+// WhatsApp debt-reminder tracking — one row per (installment, reminder type)
+// so the cron job can tell whether that specific reminder was already sent
+// and never send it twice, even across repeated/overlapping cron runs.
+export const debtReminders = pgTable(
+  "debt_reminders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    debtId: uuid("debt_id")
+      .notNull()
+      .references(() => debts.id),
+    paymentScheduleId: uuid("payment_schedule_id")
+      .notNull()
+      .references(() => paymentSchedules.id),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    reminderType: text("reminder_type", {
+      enum: ["3_days_before", "1_day_before", "due_date", "1_day_after", "3_days_after"],
+    }).notNull(),
+    scheduledDate: date("scheduled_date").notNull(),
+    status: text("status", { enum: ["pending", "sent", "failed"] })
+      .notNull()
+      .default("pending"),
+    sentAt: timestamp("sent_at"),
+    providerMessageId: text("provider_message_id"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("debt_reminders_schedule_type_idx").on(table.paymentScheduleId, table.reminderType),
+  ],
+);
+
 // Наши долги (payables) — money the store owes to suppliers/others,
 // the mirror image of Долги (customer debts owed to the store).
 export const payables = pgTable("payables", {
