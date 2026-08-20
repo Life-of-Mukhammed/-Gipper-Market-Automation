@@ -101,6 +101,8 @@ export async function confirmReceiving(
     revalidatePath("/postuplenie");
     revalidatePath("/tovar");
     revalidatePath("/assortiment");
+    revalidatePath("/otchet-kassy");
+    revalidatePath("/");
     return { ok: true, documentId };
   } catch (err) {
     console.error(err);

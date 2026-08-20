@@ -127,7 +127,11 @@ export async function recordDebtPayment(
   }
 
   revalidatePath("/dolgi");
+  revalidatePath(`/dolgi/${debtId}`);
   revalidatePath("/klienty");
+  revalidatePath("/dengi");
+  revalidatePath("/otchet-kassy");
+  revalidatePath("/");
 
   void sendDebtPaymentReceipt(clientIdForReceipt, debtId, appliedForReceipt, newBalanceForReceipt);
 
@@ -193,6 +197,7 @@ export async function createPayable(
   });
 
   revalidatePath("/dolgi");
+  revalidatePath("/otchet-kassy");
   return { ok: true };
 }
 
@@ -222,7 +227,11 @@ export async function recordPayablePayment(
         .for("update");
       if (!payable) throw new Error("Долг не найден");
 
-      const newBalance = Math.max(0, Number(payable.remainingBalance) - amount);
+      // Cap to what's actually owed — the form's max attribute doesn't stop
+      // a manually typed or submitted overpayment, and without this the
+      // cash balance would drop by more than the debt that was paid off.
+      const appliedTotal = Math.min(amount, Number(payable.remainingBalance));
+      const newBalance = Math.max(0, Number(payable.remainingBalance) - appliedTotal);
 
       await tx
         .update(payables)
@@ -234,7 +243,7 @@ export async function recordPayablePayment(
 
       await tx.insert(payablePayments).values({
         payableId,
-        amount: amount.toFixed(2),
+        amount: appliedTotal.toFixed(2),
         cashAccountId: cashAccount.id,
         cashierId: user.id,
       });
@@ -242,7 +251,7 @@ export async function recordPayablePayment(
       await tx.insert(cashTransactions).values({
         cashAccountId: cashAccount.id,
         type: "payable_payment",
-        amount: amount.toFixed(2),
+        amount: appliedTotal.toFixed(2),
         cashierId: user.id,
         note: `Оплата поставщику: ${payable.creditorName}`,
       });
@@ -254,6 +263,7 @@ export async function recordPayablePayment(
 
   revalidatePath("/dolgi");
   revalidatePath("/dengi");
+  revalidatePath("/otchet-kassy");
   return { ok: true };
 }
 

@@ -66,6 +66,8 @@ export async function createProduct(
 
   revalidatePath("/tovar");
   revalidatePath("/assortiment");
+  revalidatePath("/otchet-kassy");
+  revalidatePath("/");
   return { ok: true };
 }
 
@@ -108,6 +110,8 @@ export async function updateProduct(
 
   revalidatePath("/tovar");
   revalidatePath("/assortiment");
+  revalidatePath("/otchet-kassy");
+  revalidatePath("/");
   return { ok: true };
 }
 
@@ -119,4 +123,6 @@ export async function setProductActive(id: string, isActive: boolean) {
     .where(eq(products.id, id));
   revalidatePath("/tovar");
   revalidatePath("/assortiment");
+  revalidatePath("/otchet-kassy");
+  revalidatePath("/");
 }

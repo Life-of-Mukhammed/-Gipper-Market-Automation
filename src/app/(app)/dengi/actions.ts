@@ -39,5 +39,6 @@ export async function recordExpense(
 
   revalidatePath("/dengi");
   revalidatePath("/analiz");
+  revalidatePath("/otchet-kassy");
   return { ok: true };
 }
