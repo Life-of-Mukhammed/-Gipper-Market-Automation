@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { confirmReceiving } from "./actions";
+import { foldSearch } from "@/lib/search";
 
 type Product = {
   id: string;
@@ -44,16 +45,16 @@ export function ReceivingForm({
   const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null;
 
   const supplierResults = useMemo(() => {
-    const q = supplierQuery.trim().toLowerCase();
+    const q = foldSearch(supplierQuery.trim());
     if (!q) return suppliers;
-    return suppliers.filter((s) => s.name.toLowerCase().includes(q));
+    return suppliers.filter((s) => foldSearch(s.name).includes(q));
   }, [supplierQuery, suppliers]);
 
   const results = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = foldSearch(search.trim());
     if (!q) return [];
     return products
-      .filter((p) => p.skuCode.toLowerCase().includes(q) || p.name.toLowerCase().includes(q))
+      .filter((p) => foldSearch(p.skuCode).includes(q) || foldSearch(p.name).includes(q))
       .slice(0, 8);
   }, [search, products]);
 

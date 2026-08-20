@@ -1,6 +1,7 @@
-import { desc, ilike, or, sql } from "drizzle-orm";
+import { and, desc, gt, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { products } from "@/db/schema";
+import { homoglyphContains } from "@/lib/search-sql";
 import {
   Table,
   TableBody,
@@ -14,22 +15,27 @@ import { ListSearchBox } from "@/components/list-search-box";
 import { PaginationControls } from "@/components/pagination-controls";
 import { ProductFormDialog } from "./product-form-dialog";
 import { ToggleActiveButton } from "./toggle-active-button";
+import { StockFilterToggle } from "./stock-filter-toggle";
 
 const PAGE_SIZE = 25;
 
 export default async function TovarPage({ searchParams }: PageProps<"/tovar">) {
   const sp = await searchParams;
   const query = typeof sp.q === "string" ? sp.q.trim() : "";
+  const showAll = sp.inStock === "0";
   const page = Math.max(1, Number(sp.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
-  const where = query
-    ? or(
-        ilike(products.name, `%${query}%`),
-        ilike(products.skuCode, `%${query}%`),
-        ilike(products.barcode, `%${query}%`),
-      )
-    : undefined;
+  const where = and(
+    showAll ? undefined : gt(products.stockQty, 0),
+    query
+      ? or(
+          homoglyphContains(products.name, query),
+          homoglyphContains(products.skuCode, query),
+          homoglyphContains(products.barcode, query),
+        )
+      : undefined,
+  );
 
   const [allProducts, [{ count }]] = await Promise.all([
     db
@@ -59,23 +65,22 @@ export default async function TovarPage({ searchParams }: PageProps<"/tovar">) {
         <ProductFormDialog />
       </div>
 
-      <div className="px-6 pt-4">
+      <div className="px-6 pt-4 flex flex-wrap items-center gap-4">
         <ListSearchBox
           basePath="/tovar"
           placeholder="Поиск по артикулу, штрихкоду или названию..."
         />
+        <StockFilterToggle />
       </div>
 
       <main className="flex-1 p-6">
-        <div className="rounded-md border bg-background">
+        <div className="rounded-md border bg-background overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Артикул</TableHead>
-                <TableHead>Штрихкод</TableHead>
                 <TableHead>Наименование</TableHead>
                 <TableHead>Ед.</TableHead>
-                <TableHead className="text-right">Закупка</TableHead>
+                <TableHead className="text-right hidden md:table-cell">Закупка</TableHead>
                 <TableHead className="text-right">Продажа</TableHead>
                 <TableHead className="text-right">Остаток</TableHead>
                 <TableHead>Статус</TableHead>
@@ -85,18 +90,16 @@ export default async function TovarPage({ searchParams }: PageProps<"/tovar">) {
             <TableBody>
               {allProducts.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                    {query ? "Ничего не найдено" : "Товаров пока нет"}
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                    {query ? "Ничего не найдено" : showAll ? "Товаров пока нет" : "Нет товаров в наличии"}
                   </TableCell>
                 </TableRow>
               )}
               {allProducts.map((p) => (
                 <TableRow key={p.id} className={!p.isActive ? "opacity-50" : ""}>
-                  <TableCell className="font-mono text-sm">{p.skuCode}</TableCell>
-                  <TableCell className="font-mono text-sm">{p.barcode ?? "—"}</TableCell>
                   <TableCell>{p.name}</TableCell>
                   <TableCell>{p.unit}</TableCell>
-                  <TableCell className="text-right">{p.purchasePrice}</TableCell>
+                  <TableCell className="text-right hidden md:table-cell">{p.purchasePrice}</TableCell>
                   <TableCell className="text-right">{p.salePrice}</TableCell>
                   <TableCell className="text-right">
                     <span

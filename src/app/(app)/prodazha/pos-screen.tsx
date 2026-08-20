@@ -29,6 +29,7 @@ import {
   queueOfflineSale,
   syncPendingOutbox,
 } from "@/lib/offline/sync";
+import { foldSearch } from "@/lib/search";
 
 export type PosProduct = {
   id: string;
@@ -503,11 +504,6 @@ export function PosScreen() {
                         onSaved={refetchGridFromStart}
                       />
                     </div>
-                    {lowStock && (
-                      <span className="absolute -top-1.5 -right-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-medium text-destructive-foreground">
-                        {p.stockQty}
-                      </span>
-                    )}
                     <button
                       type="button"
                       disabled={outOfStock}
@@ -524,8 +520,14 @@ export function PosScreen() {
                       <div className="flex flex-col gap-0.5">
                         <span className="text-sm font-medium leading-snug line-clamp-2">{p.name}</span>
                         <span className="text-sm font-semibold">{formatMoney(Number(p.salePrice))} сум</span>
-                        <span className={`text-xs ${outOfStock ? "text-destructive" : "text-muted-foreground"}`}>
-                          {outOfStock ? "нет в наличии" : `ост. ${p.stockQty} ${p.unit}`}
+                        <span
+                          className={`text-xs ${
+                            outOfStock || lowStock ? "text-destructive font-medium" : "text-muted-foreground"
+                          }`}
+                        >
+                          {outOfStock
+                            ? "нет в наличии"
+                            : `ост. ${p.stockQty}${/^\d+$/.test(p.unit) ? "" : ` ${p.unit}`}`}
                         </span>
                       </div>
                     </button>
@@ -686,6 +688,14 @@ export function PosScreen() {
             <div className="flex gap-2">
               <Button
                 type="button"
+                variant={paymentType === "debt" ? "default" : "outline"}
+                className="flex-1"
+                onClick={() => setPaymentType("debt")}
+              >
+                Долг
+              </Button>
+              <Button
+                type="button"
                 variant={paymentType === "cash" ? "default" : "outline"}
                 className="flex-1"
                 onClick={() => setPaymentType("cash")}
@@ -699,14 +709,6 @@ export function PosScreen() {
                 onClick={() => setPaymentType("card")}
               >
                 Карта
-              </Button>
-              <Button
-                type="button"
-                variant={paymentType === "debt" ? "default" : "outline"}
-                className="flex-1"
-                onClick={() => setPaymentType("debt")}
-              >
-                Долг
               </Button>
             </div>
 
@@ -793,21 +795,21 @@ export function PosScreen() {
 }
 
 function filterLocalProducts(catalog: PosProduct[], q: string) {
-  const query = q.trim().toLowerCase();
+  const query = foldSearch(q.trim());
   if (!query) return catalog.slice(0, 60);
   return catalog
     .filter(
       (p) =>
-        p.skuCode.toLowerCase().includes(query) ||
-        p.barcode?.toLowerCase().includes(query) ||
-        p.name.toLowerCase().includes(query),
+        foldSearch(p.skuCode).includes(query) ||
+        (p.barcode ? foldSearch(p.barcode).includes(query) : false) ||
+        foldSearch(p.name).includes(query),
     )
     .slice(0, 60);
 }
 
 function filterLocalClients(list: PosClient[], q: string) {
-  const query = q.toLowerCase();
+  const query = foldSearch(q);
   return list
-    .filter((c) => c.fullName.toLowerCase().includes(query) || c.phone.toLowerCase().includes(query))
+    .filter((c) => foldSearch(c.fullName).includes(query) || foldSearch(c.phone).includes(query))
     .slice(0, 8);
 }

@@ -1,6 +1,7 @@
-import { desc, eq, ilike, or, sql } from "drizzle-orm";
+import { desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { clients, debts } from "@/db/schema";
+import { homoglyphContains } from "@/lib/search-sql";
 import {
   Table,
   TableBody,
@@ -24,7 +25,7 @@ export default async function KlientyPage({ searchParams }: PageProps<"/klienty"
   const offset = (page - 1) * PAGE_SIZE;
 
   const where = query
-    ? or(ilike(clients.fullName, `%${query}%`), ilike(clients.phone, `%${query}%`))
+    ? or(homoglyphContains(clients.fullName, query), homoglyphContains(clients.phone, query))
     : undefined;
 
   const [rows, [{ count }]] = await Promise.all([

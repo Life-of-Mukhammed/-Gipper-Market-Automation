@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, gt, gte, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
 import {
@@ -17,6 +17,7 @@ import {
   warehouses,
 } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { homoglyphContains } from "@/lib/search-sql";
 import { sendTelegramMessage } from "@/lib/notifications/telegram";
 import { enqueueWhatsappMessage } from "@/lib/notifications/queue";
 import { buildSaleReceiptText, type ReceiptItem } from "@/lib/receipts/text";
@@ -84,9 +85,9 @@ export async function searchProductsOnline(query: string) {
       and(
         eq(products.isActive, true),
         or(
-          ilike(products.name, `%${q}%`),
-          ilike(products.skuCode, `%${q}%`),
-          ilike(products.barcode, `%${q}%`),
+          homoglyphContains(products.name, q),
+          homoglyphContains(products.skuCode, q),
+          homoglyphContains(products.barcode, q),
         ),
       ),
     )
@@ -123,9 +124,9 @@ export async function browseProducts(opts: {
     opts.category ? eq(products.category, opts.category) : undefined,
     q
       ? or(
-          ilike(products.name, `%${q}%`),
-          ilike(products.skuCode, `%${q}%`),
-          ilike(products.barcode, `%${q}%`),
+          homoglyphContains(products.name, q),
+          homoglyphContains(products.skuCode, q),
+          homoglyphContains(products.barcode, q),
         )
       : undefined,
   );
@@ -147,7 +148,7 @@ export async function searchClientsOnline(query: string) {
   return db
     .select({ id: clients.id, fullName: clients.fullName, phone: clients.phone })
     .from(clients)
-    .where(or(ilike(clients.fullName, `%${q}%`), ilike(clients.phone, `%${q}%`)))
+    .where(or(homoglyphContains(clients.fullName, q), homoglyphContains(clients.phone, q)))
     .limit(8);
 }
 
@@ -411,6 +412,9 @@ export async function checkoutSale(
     revalidatePath("/assortiment");
     revalidatePath("/klienty");
     revalidatePath("/dolgi");
+    revalidatePath("/dengi");
+    revalidatePath("/otchet-kassy");
+    revalidatePath("/");
 
     const displayTotal = paymentType === "debt" ? result.debtTotal : result.total;
 

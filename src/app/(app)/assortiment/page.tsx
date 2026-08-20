@@ -1,6 +1,7 @@
-import { and, eq, gt, ilike, or, sql } from "drizzle-orm";
+import { and, eq, gt, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { products } from "@/db/schema";
+import { homoglyphContains } from "@/lib/search-sql";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PaginationControls } from "@/components/pagination-controls";
@@ -21,9 +22,9 @@ export default async function AssortimentPage({
     gt(products.stockQty, 0),
     query
       ? or(
-          ilike(products.name, `%${query}%`),
-          ilike(products.skuCode, `%${query}%`),
-          ilike(products.barcode, `%${query}%`),
+          homoglyphContains(products.name, query),
+          homoglyphContains(products.skuCode, query),
+          homoglyphContains(products.barcode, query),
         )
       : undefined,
   );
@@ -58,7 +59,8 @@ export default async function AssortimentPage({
                 <div className="flex items-center justify-between mt-1">
                   <span className="font-semibold">{p.salePrice} сум</span>
                   <Badge variant={p.stockQty > p.minStockThreshold ? "default" : "destructive"}>
-                    {p.stockQty} {p.unit}
+                    {p.stockQty}
+                    {/^\d+$/.test(p.unit) ? "" : ` ${p.unit}`}
                   </Badge>
                 </div>
               </CardContent>

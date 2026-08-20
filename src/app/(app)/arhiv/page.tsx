@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { desc, eq, ilike, or, sql } from "drizzle-orm";
+import { desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { clients, products, sales, stockMovements, users } from "@/db/schema";
+import { homoglyphContains } from "@/lib/search-sql";
 import {
   Table,
   TableBody,
@@ -34,7 +35,7 @@ const MOVEMENT_LABELS: Record<
 
 async function loadClientArchive(query: string, offset: number) {
   const where = query
-    ? or(ilike(clients.fullName, `%${query}%`), ilike(clients.phone, `%${query}%`))
+    ? or(homoglyphContains(clients.fullName, query), homoglyphContains(clients.phone, query))
     : undefined;
 
   return Promise.all([
@@ -67,7 +68,7 @@ async function loadClientArchive(query: string, offset: number) {
 
 async function loadProductArchive(query: string, offset: number) {
   const where = query
-    ? or(ilike(products.name, `%${query}%`), ilike(products.skuCode, `%${query}%`))
+    ? or(homoglyphContains(products.name, query), homoglyphContains(products.skuCode, query))
     : undefined;
 
   return Promise.all([
